@@ -1,0 +1,6 @@
+{
+  "name": "Kaltemp Dashboard",
+  "description": "Dashboard ejecutivo de ventas, logística, D2C y marketing para Kaltemp.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

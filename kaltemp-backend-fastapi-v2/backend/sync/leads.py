@@ -1,0 +1,181 @@
+import duckdb
+from fastapi import APIRouter, Query
+from typing import Optional
+from datetime import datetime, date
+import os
+
+router = APIRouter(prefix="/api", tags=["leads"])
+
+DUCKDB_PATH = os.getenv("DUCKDB_PATH", "kaltemp_matrix.duckdb")
+
+def get_db_connection():
+    return duckdb.connect(DUCKDB_PATH, read_only=True)
+
+@router.get("/leads")
+def get_leads(
+    fecha_inicio: Optional[str] = Query(None),
+    fecha_fin: Optional[str] = Query(None)
+):
+    conn = get_db_connection()
+    try:
+        # Cargar todos los leads para cálculos históricos y filtrados
+        df_all = conn.execute("SELECT * FROM leads").df()
+        if df_all.empty:
+            return {"totalLeads": 0, "weeklyTrend": [], "monthlyData": [], "pipelineStatuses": []}
+
+        df_all["FECHA_OBJ"] = duckdb.filter(df_all["FECHA_OBJ"]) if hasattr(df_all["FECHA_OBJ"], 'dt') else df_all["FECHA_OBJ"]
+        # Convertir a datetime si no lo está
+        import pandas as pd
+        df_all["FECHA_OBJ"] = pd.to_datetime(df_all["FECHA_OBJ"], errors="coerce")
+        df_all["FECHA_CORTE"] = df_all["FECHA_OBJ"].dt.date
+        df_all["AÑO"] = df_all["FECHA_OBJ"].dt.year
+        df_all["MES_NUM"] = df_all["FECHA_OBJ"].dt.month
+        df_all["SEMANA"] = df_all["FECHA_OBJ"].dt.isocalendar().week
+
+        # Mapeos de negocio (idénticos a tu versión Streamlit)
+        def normalizar_canal(val):
+            if pd.isna(val): return "Chat Web"
+            s = str(val).strip().upper()
+            return "WhatsApp" if ("WHATSAPP" in s or "WSP" in s or s == "WA") else "Chat Web"
+
+        def normalizar_estado(st_val):
+            if pd.isna(st_val): return "NUEVO"
+            s = str(st_val).upper().strip()
+            if s == "CLIENT" or "CON_VENTA" in s or "WON" in s: return "CON_VENTA"
+            elif s == "LONG_TERM" or "SIN_VENTA" in s or "LOST" in s or "DISCARDED" in s: return "SIN_VENTA"
+            elif s == "ACTIVE" or "PROGRESO" in s or "CONTACTED" in s: return "EN_PROGRESO"
+            return "NUEVO"
+
+        def limpiar_fuente(val):
+            if pd.isna(val) or not str(val).strip(): return "kaltemp.cl"
+            s = str(val).strip().lower()
+            if "google" in s: return "Google"
+            elif "facebook" in s or "fb" in s: return "Facebook"
+            elif "instagram" in s or "ig" in s: return "Instagram"
+            elif "kaltemp" in s: return "kaltemp.cl"
+            return s.capitalize()
+
+        df_all["CANAL_DISP"] = df_all["CANAL"].apply(normalizar_canal)
+        df_all["ESTADO_DISP"] = df_all["ESTADO"].apply(normalizar_estado)
+        df_all["FUENTE_DISP"] = df_all["FUENTE"].apply(limpiar_fuente)
+
+        # Filtro de rango de fechas
+        f_in = pd.to_datetime(fecha_inicio).date() if fecha_inicio else df_all["FECHA_CORTE"].min()
+        f_fi = pd.to_datetime(fecha_fin).date() if fecha_fin else df_all["FECHA_CORTE"].max()
+
+        df_filt = df_all[(df_all["FECHA_CORTE"] >= f_in) & (df_all["FECHA_CORTE"] <= f_fi)]
+
+        # KPIs Principales y comparativos
+        total_leads = len(df_filt)
+        
+        f_in_yoy = f_in.replace(year=f_in.year - 1) if f_in else None
+        f_fi_yoy = f_fi.replace(year=f_fi.year - 1) if f_fi else None
+        f_in_2yoy = f_in.replace(year=f_in.year - 2) if f_in else None
+        f_fi_2yoy = f_fi.replace(year=f_fi.year - 2) if f_fi else None
+
+        total_yoy = len(df_all[(df_all["FECHA_CORTE"] >= f_in_yoy) & (df_all["FECHA_CORTE"] <= f_fi_yoy)]) if f_in_yoy else 0
+        total_2yoy = len(df_all[(df_all["FECHA_CORTE"] >= f_in_2yoy) & (df_all["FECHA_CORTE"] <= f_fi_2yoy)]) if f_in_2yoy else 0
+
+        convertidos = len(df_filt[df_filt["ESTADO_DISP"] == "CON_VENTA"])
+        tasa_conv = round((convertidos / total_leads * 100), 1) if total_leads > 0 else 0
+
+        # Pipeline
+        st_counts = df_filt["ESTADO_DISP"].value_counts().to_dict()
+        labels_map = {"NUEVO": "Nuevo", "EN_PROGRESO": "En Progreso", "CON_VENTA": "Con Venta", "SIN_VENTA": "Sin Venta"}
+        pipeline_statuses = []
+        for st_key, st_label in labels_map.items():
+            cnt = int(st_counts.get(st_key, 0))
+            pct = round((cnt / total_leads * 100), 1) if total_leads > 0 else 0
+            pipeline_statuses.append({"id": st_key, "label": st_label, "count": cnt, "pct": pct})
+
+        # Canal Líder
+        canal_counts = df_filt["CANAL_DISP"].value_counts()
+        top_canal_nombre = canal_counts.index[0] if not canal_counts.empty else "—"
+        top_canal_pct = round((canal_counts.iloc[0] / total_leads * 100), 1) if not canal_counts.empty and total_leads > 0 else 0
+
+        # Vendedor Líder y Ranking
+        vend_counts = df_filt["VENDEDOR"].value_counts()
+        top_vend_nombre = vend_counts.index[0] if not vend_counts.empty else "—"
+        top_vend_pct = round((vend_counts.iloc[0] / total_leads * 100), 1) if not vend_counts.empty and total_leads > 0 else 0
+        
+        sales_reps = []
+        for v_name, cnt in vend_counts.items():
+            if pd.isna(v_name) or not str(v_name).strip(): continue
+            sales_reps.append({
+                "name": str(v_name).title(),
+                "leads": int(cnt),
+                "pct": round((cnt / total_leads * 100), 1) if total_leads > 0 else 0
+            })
+
+        # Fuentes
+        src_counts = df_filt["FUENTE_DISP"].value_counts()
+        sources_data = []
+        for src_name, cnt in src_counts.items():
+            sources_data.append({
+                "name": str(src_name),
+                "count": int(cnt),
+                "share": round((cnt / total_leads * 100), 1) if total_leads > 0 else 0
+            })
+
+        # Comunas
+        com_counts = df_filt["COMUNA"].value_counts().head(5)
+        comunas = []
+        for com_name, cnt in com_counts.items():
+            if pd.isna(com_name) or not str(com_name).strip(): continue
+            comunas.append({
+                "comuna": str(com_name).title(),
+                "count": int(cnt),
+                "pct": round((cnt / total_leads * 100), 1) if total_leads > 0 else 0
+            })
+
+        # Tendencia Semanal
+        anio_act = f_fi.year
+        anio_ant = anio_act - 1
+        anio_2ant = anio_act - 2
+
+        sem_act = df_all[df_all["AÑO"] == anio_act].groupby("SEMANA")["ID_LEAD"].count().to_dict()
+        sem_ant = df_all[df_all["AÑO"] == anio_ant].groupby("SEMANA")["ID_LEAD"].count().to_dict()
+        sem_2ant = df_all[df_all["AÑO"] == anio_2ant].groupby("SEMANA")["ID_LEAD"].count().to_dict()
+
+        weekly_trend = []
+        for w in range(1, 53):
+            weekly_trend.append({
+                "week": f"S{w}",
+                "yActual": int(sem_act.get(w, 0)),
+                "yAnterior": int(sem_ant.get(w, 0)),
+                "y2Anterior": int(sem_22ant.get(w, 0)) if 'sem_22ant' in locals() else int(sem_2ant.get(w, 0))
+            })
+
+        # Evolución Mensual
+        meses_nombres = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+        mes_act = df_all[df_all["AÑO"] == anio_act].groupby("MES_NUM")["ID_LEAD"].count().to_dict()
+        mes_ant = df_all[df_all["AÑO"] == anio_ant].groupby("MES_NUM")["ID_LEAD"].count().to_dict()
+        mes_2ant = df_all[df_all["AÑO"] == anio_2ant].groupby("MES_NUM")["ID_LEAD"].count().to_dict()
+
+        monthly_data = []
+        for m_num in range(1, 13):
+            monthly_data.append({
+                "mes": meses_nombres[m_num - 1],
+                "yActual": int(mes_act.get(m_num, 0)),
+                "yAnterior": int(mes_ant.get(m_num, 0)),
+                "y2Anterior": int(mes_2ant.get(m_num, 0))
+            })
+
+        return {
+            "totalLeads": total_leads,
+            "totalLeadsYoy": total_yoy,
+            "totalLeads2Yoy": total_2yoy,
+            "convertidos": convertidos,
+            "tasaConversion": tasa_conv,
+            "canalPrincipal": {"nombre": top_canal_nombre, "pct": top_canal_pct},
+            "topVendedor": {"nombre": top_vend_nombre, "pct": top_vend_pct},
+            "pipelineStatuses": pipelineStatuses,
+            "weeklyTrend": weekly_trend,
+            "monthlyData": monthly_data,
+            "sourcesData": sources_data,
+            "salesReps": sales_reps,
+            "comunas": comunas,
+            "aniosDisponibles": [anio_act, anio_ant, anio_2ant]
+        }
+    finally:
+        conn.close()
