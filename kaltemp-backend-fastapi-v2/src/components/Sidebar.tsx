@@ -1,18 +1,23 @@
+// ============================================================
+// ARCHIVO: Sidebar.tsx
+// RUTA: C:\kaltemp_app\kaltemp-backend-fastapi-v2\src\components\Sidebar.tsx
+// ============================================================
+
 import React, { useState, useEffect } from 'react';
 import { useGlobalFilter, ALL_CATEGORIES, ALL_CHANNELS, ALL_REPS, ALL_WAREHOUSES } from '../context/FilterContext';
 import { useUser } from '../context/UserContext';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
 import { DateRangePicker } from './DateRangePicker';
-import { downloadVentasExcel, fetchCategoriasPendientes, fetchCampanasPendientes } from '../services/api';
-
-// Logos reales de Kaltemp (07-ago-2026) -- mismos que LoginView.tsx.
-const KALTEMP_LOGO_CONDENSADO = 'https://cdn.shopify.com/s/files/1/0656/1605/2459/files/Logo_Kaltemp_Condensado.png?v=1786109942';
-const KALTEMP_LOGO_HORIZONTAL = 'https://kaltemp.cl/cdn/shop/files/Logo_Horizontal-01_PNG.png?height=96&v=1659535251';
+import { downloadVentasExcel, fetchCategoriasPendientes, fetchCampanasPendientes, fetchPesoPendientes, fetchSyncStatus } from '../services/api';
+import { UserManagementModal } from './UserManagementModal';
 import { CategoriaAlertaModal } from './CategoriaAlertaModal';
 import { CampanaCategoriaAlertaModal } from './CampanaCategoriaAlertaModal';
+import { PesoAlertaModal } from './PesoAlertaModal';
 import { DataSyncModal } from './DataSyncModal';
+import { DatosManualesModal } from './DatosManualesModal';
 import {
   Home,
+  LayoutDashboard,
   Package,
   Boxes,
   ClipboardList,
@@ -27,6 +32,7 @@ import {
   Building2,
   Building,
   Thermometer,
+  LogOut,
   Sun,
   Moon,
   Download,
@@ -34,15 +40,23 @@ import {
   ChevronDown,
   ChevronRight,
   AlertTriangle,
-  Database
+  Weight,
+  Database,
+  Shield,
+  UserCheck,
+  Wallet,
+  Clock
 } from 'lucide-react';
-import { ModuleId, ThemeMode } from '../types';
+import { ModuleId, ThemeMode, BrandMode } from '../types';
+import { getBrandTokens } from '../theme/brandTokens';
 
 interface SidebarProps {
   activeModule: ModuleId;
   onSelectModule: (m: ModuleId) => void;
   theme: ThemeMode;
   onThemeToggle?: () => void;
+  brandMode: BrandMode;
+  onBrandModeChange?: (m: BrandMode) => void;
   startDate: string;
   endDate: string;
   onStartDateChange: (d: string) => void;
@@ -69,6 +83,12 @@ interface NavGroup {
 
 const NAV_GROUPS: NavGroup[] = [
   {
+    category: '📊 Resumen',
+    items: [
+      { id: 'resumen', label: 'Resumen', icon: LayoutDashboard }
+    ]
+  },
+  {
     category: '🏠 General',
     items: [
       { id: 'principal', label: 'Principal', icon: Home },
@@ -77,19 +97,18 @@ const NAV_GROUPS: NavGroup[] = [
     ]
   },
   {
-    // Antes eran 2 grupos separados ("🗃️ Bsale" y "🚚 Logística") --
-    // fusionados (07-ago-2026) porque Fulfillment y Pendientes por
-    // Despachar son la misma familia funcional (qué está por salir/salió
-    // del centro de distribución, solo que por canales distintos), y
-    // "Bsale" como nombre de categoría no decía nada de negocio al que lo
-    // mira -- es el nombre interno del ERP, no una función.
-    category: '📦 Inventario & Despacho',
+    category: '🗃️ Bsale',
     items: [
       { id: 'stock', label: 'Stock', icon: Boxes },
       { id: 'pendientes_despacho', label: 'Pendientes por Despachar', icon: ClipboardList, badge: '4' },
-      { id: 'fulfillment', label: 'Detalle Fulfillment', icon: Truck },
-      { id: 'control_logistico', label: 'Control Logístico', icon: Send, badge: '2' },
       { id: 'notas_credito', label: 'Notas de Crédito', icon: FileSpreadsheet, badge: '3' }
+    ]
+  },
+  {
+    category: '🚚 Logística',
+    items: [
+      { id: 'fulfillment', label: 'Detalle Fulfillment', icon: Truck },
+      { id: 'control_logistico', label: 'Control Logístico', icon: Send, badge: '2' }
     ]
   },
   {
@@ -116,10 +135,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectModule,
   theme,
   onThemeToggle,
+  brandMode,
+  onBrandModeChange,
   isCollapsed,
-  onToggleCollapse
+  onToggleCollapse,
+  userEmail: propEmail,
+  userName: propName,
+  onLogout
 }) => {
   const isDark = theme === 'dark';
+  const brandTokens = getBrandTokens(brandMode, isDark);
   const {
     selectedCategories,
     setSelectedCategories,
@@ -135,15 +160,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setEndDate
   } = useGlobalFilter();
 
-  const { currentUser, isModuleAllowed } = useUser();
+  const { currentUser, isModuleAllowed, users, impersonate } = useUser();
+  const userName = currentUser?.nombre || propName || 'William Garrido';
+  const userEmail = currentUser?.email || propEmail || 'william@kaltemp.cl';
   const isWilliam = currentUser?.email.toLowerCase() === 'william@kaltemp.cl';
+  const isManuel = currentUser?.email.toLowerCase() === 'manuel@kaltemp.cl';
+  const puedeBajarExcel = isWilliam || isManuel;
 
   const [downloading, setDownloading] = useState(false);
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
+  const [showModal, setShowModal] = useState(false);
   const [showDataSyncModal, setShowDataSyncModal] = useState(false);
   const [showCategoriaModal, setShowCategoriaModal] = useState(false);
   const [categoriasPendientesCount, setCategoriasPendientesCount] = useState(0);
   const [showCampanaCategoriaModal, setShowCampanaCategoriaModal] = useState(false);
   const [campanasPendientesCount, setCampanasPendientesCount] = useState(0);
+  const [showPesoModal, setShowPesoModal] = useState(false);
+  const [pesoPendientesCount, setPesoPendientesCount] = useState(0);
+  const [showDatosManualesModal, setShowDatosManualesModal] = useState(false);
+  const [showFiltrosGlobales, setShowFiltrosGlobales] = useState(false);
+  const [ultimaActualizacion, setUltimaActualizacion] = useState<string | null | undefined>(undefined);
+
+  const cargarUltimaActualizacion = () => {
+    fetchSyncStatus()
+      .then((res) => setUltimaActualizacion(res.terminado_en))
+      .catch(() => setUltimaActualizacion(null));
+  };
+
+  const formatUltimaActualizacion = (iso: string | null | undefined): string => {
+    if (ultimaActualizacion === undefined) return 'Cargando...';
+    if (!iso) return 'Sin datos';
+    const fecha = new Date(iso);
+    if (isNaN(fecha.getTime())) return 'Sin datos';
+    const diffMin = Math.floor((Date.now() - fecha.getTime()) / 60000);
+    if (diffMin < 1) return 'hace instantes';
+    if (diffMin < 60) return `hace ${diffMin} min`;
+    const diffHoras = Math.floor(diffMin / 60);
+    if (diffHoras < 24) return `hace ${diffHoras} h`;
+    return fecha.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' }) +
+      ' ' + fecha.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+  };
 
   const cargarCategoriasPendientes = () => {
     fetchCategoriasPendientes()
@@ -157,18 +213,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
       .catch(() => {});
   };
 
+  const cargarPesoPendientes = () => {
+    fetchPesoPendientes()
+      .then((res) => setPesoPendientesCount(res.total))
+      .catch(() => {});
+  };
+
   useEffect(() => {
     cargarCategoriasPendientes();
     cargarCampanasPendientes();
+    cargarPesoPendientes();
+    cargarUltimaActualizacion();
+    const intervalo = setInterval(cargarUltimaActualizacion, 5 * 60 * 1000);
+    return () => clearInterval(intervalo);
   }, []);
 
-  const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>(() => {
-    const initial: Record<string, boolean> = {};
-    NAV_GROUPS.forEach((group) => {
-      initial[group.category] = group.items.some((item) => item.id === activeModule);
-    });
-    return initial;
-  });
+  const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({});
 
   const toggleGroup = (category: string) => {
     setOpenGroups((prev) => ({
@@ -194,95 +254,111 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       <aside
-        className={`shrink-0 border-r flex flex-col justify-between transition-all duration-300 select-none ${
-          isCollapsed ? 'w-16' : 'w-64'
+        className={`shrink-0 border-r flex flex-col justify-between select-none overflow-x-hidden transition-[width] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${
+          isCollapsed ? 'w-[70px]' : 'w-64'
         } ${
-          isDark ? 'bg-[#121214] border-[#2C2C2E] text-[#F5F5F7]' : 'bg-[#F2F2F7] border-slate-200/80 text-[#1D1D1F]'
+          isDark 
+            ? 'bg-[#121214] border-[#2C2C2E] text-[#F5F5F7]' 
+            : 'bg-[#EAEBED] border-slate-300/80 text-[#1D1D1F]'
         }`}
       >
-        {/* Top Header / Branding */}
-        <div className={`border-b flex items-center gap-2 transition-all ${
-          isCollapsed ? 'justify-center px-2 py-3.5' : 'justify-between p-3.5'
-        } ${
-          isDark ? 'border-[#2C2C2E]' : 'border-slate-200/80'
-        }`}>
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div
-              onClick={onToggleCollapse}
-              className="relative p-[2px] rounded-2xl overflow-hidden shrink-0 group cursor-pointer shadow-lg transition-transform active:scale-95"
-              title={isCollapsed ? 'Haz clic para expandir la barra lateral' : 'Haz clic para colapsar la barra lateral'}
-            >
-              {/* Glow: -1000% (el valor original) es innecesariamente
-                  enorme y puede generar imprecisión de render en algunos
-                  navegadores en los bordes del recorte -- 75% ya es de
-                  sobra para que las esquinas del cuadrado girando nunca
-                  entren al área visible, y el overflow-hidden + rounded-2xl
-                  del wrapper sigue recortando todo en forma de cuadrado
-                  con esquinas redondeadas (no círculo) (07-ago-2026) */}
-              <div className="absolute inset-[-75%] bg-[conic-gradient(from_90deg_at_50%_50%,#CC0000_0%,#58C6E5_33%,#800404_66%,#CC0000_100%)] animate-[spin_8s_linear_infinite]" />
-              <div className="relative w-9 h-9 rounded-[14px] bg-white flex items-center justify-center shadow-inner overflow-hidden">
-                <img
-                  src={KALTEMP_LOGO_CONDENSADO}
-                  alt="Kaltemp"
-                  className="w-full h-full object-contain p-0.5"
-                />
-              </div>
-            </div>
+        {/* Filete superior de marca -- responde al modo de marca global (ver theme/brandTokens.ts) */}
+        <div
+          className="h-[3px] w-full shrink-0"
+          style={{ background: brandTokens.hairline }}
+        />
 
-            {!isCollapsed && (
-              <div className="flex items-center min-w-0">
-                <img
-                  src={KALTEMP_LOGO_HORIZONTAL}
-                  alt="Kaltemp"
-                  className="h-7 object-contain"
-                />
-              </div>
-            )}
+        {/* Top Header / Branding */}
+        <div className={`p-3.5 border-b flex items-center gap-2.5 ${
+          isDark ? 'border-[#2C2C2E]' : 'border-slate-300/70'
+        }`}>
+          <div
+            onClick={onToggleCollapse}
+            className="w-9 h-9 rounded-[13px] flex items-center justify-center shrink-0 cursor-pointer border transition-transform active:scale-90 duration-150"
+            style={{
+              background: isDark ? '#2A2A32' : '#1a1a1e',
+              borderColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.1)',
+              boxShadow:
+                'inset 0 1px 0 rgba(255,255,255,0.14), 0 5px 14px rgba(196,64,14,0.3), 0 5px 14px rgba(15,76,129,0.24)',
+            }}
+            title={isCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
+          >
+            <svg width="20" height="20" viewBox="0 0 100 100" fill="none">
+              <defs>
+                <linearGradient id="sbStrokeWarm" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#F2954A" />
+                  <stop offset="100%" stopColor="#C4400E" />
+                </linearGradient>
+                <linearGradient id="sbStrokeCool" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#4FA8DE" />
+                  <stop offset="100%" stopColor="#0F4C81" />
+                </linearGradient>
+                <linearGradient id="sbStrokeBar" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#E8791A" />
+                  <stop offset="100%" stopColor="#1D6FA5" />
+                </linearGradient>
+              </defs>
+              <path d="M50 12 L20 88" stroke="url(#sbStrokeWarm)" strokeWidth="14" strokeLinecap="round" />
+              <path d="M50 12 L80 88" stroke="url(#sbStrokeCool)" strokeWidth="14" strokeLinecap="round" />
+              <path d="M33 63 L67 63" stroke="url(#sbStrokeBar)" strokeWidth="11" strokeLinecap="round" />
+            </svg>
+          </div>
+
+          <div className={`overflow-hidden transition-all duration-300 ease-out whitespace-nowrap ${
+            isCollapsed ? 'w-0 opacity-0 pointer-events-none' : 'w-auto opacity-100'
+          }`}>
+            <span className={`font-extrabold text-lg tracking-tight block leading-none ${
+              isDark ? 'text-white' : 'text-[#1D1D1F]'
+            }`}>
+              Analítica
+            </span>
           </div>
         </div>
 
         {/* Main Scrollable Content */}
-        <div className="flex-1 overflow-y-auto space-y-4 py-2">
-          <div className="px-2 space-y-3">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-3 py-2">
+          <div className="px-2 space-y-2.5">
             {NAV_GROUPS.map((group) => {
               const allowedItems = group.items.filter((item) => isModuleAllowed(item.id));
               if (allowedItems.length === 0) return null;
 
-              const isOpen = openGroups[group.category] ?? true;
+              const isOpen = openGroups[group.category] ?? false;
               const groupBadges = allowedItems.reduce((acc, item) => acc + (Number(item.badge) || 0), 0);
               const hasActiveItem = allowedItems.some((item) => item.id === activeModule);
 
               return (
-                <div key={group.category} className="space-y-1">
-                  {!isCollapsed && (
-                    <button
-                      onClick={() => toggleGroup(group.category)}
-                      className={`w-full flex items-center justify-between px-2 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-colors ${
-                        hasActiveItem && !isOpen
-                          ? 'text-[#CC0000] font-black'
-                          : isDark
-                          ? 'text-[#8E8E93] hover:text-white hover:bg-[#2C2C2E]/60'
-                          : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200/60'
-                      }`}
-                    >
-                      <span className="truncate">{group.category}</span>
-                      <div className="flex items-center gap-1 shrink-0">
-                        {!isOpen && groupBadges > 0 && (
-                          <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-full bg-amber-500/20 text-amber-500 border border-amber-500/30">
-                            {groupBadges}
-                          </span>
-                        )}
-                        {isOpen ? (
-                          <ChevronDown className="w-3.5 h-3.5 opacity-60" />
-                        ) : (
-                          <ChevronRight className="w-3.5 h-3.5 opacity-60" />
-                        )}
+                <div key={group.category} className="space-y-0.5">
+                  {/* Encabezado del grupo (solo se muestra o expande texto en full) */}
+                  <button
+                    onClick={() => toggleGroup(group.category)}
+                    className={`w-full flex items-center justify-between px-2 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-colors overflow-hidden ${
+                      isCollapsed ? 'hidden' : 'flex'
+                    } ${
+                      hasActiveItem && !isOpen
+                        ? 'text-[#CC0000] font-black'
+                        : isDark
+                        ? 'text-[#8E8E93] hover:text-white hover:bg-[#2C2C2E]/60'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-300/50'
+                    }`}
+                  >
+                    <span className="truncate">{group.category}</span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {!isOpen && groupBadges > 0 && (
+                        <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                          {groupBadges}
+                        </span>
+                      )}
+                      <div className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}>
+                        <ChevronDown className="w-3.5 h-3.5 opacity-60" />
                       </div>
-                    </button>
-                  )}
+                    </div>
+                  </button>
 
-                  {(isOpen || isCollapsed) && (
-                    <div className="space-y-0.5">
+                  {/* Contenedor de Items con animación CSS Grid */}
+                  <div className={`grid transition-all duration-200 ease-in-out ${
+                    isOpen || isCollapsed ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+                  }`}>
+                    <div className="overflow-hidden space-y-0.5">
                       {allowedItems.map((item) => {
                         const Icon = item.icon;
                         const isActive = activeModule === item.id;
@@ -292,63 +368,200 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             key={item.id}
                             onClick={() => onSelectModule(item.id)}
                             title={isCollapsed ? item.label : undefined}
-                            className={`w-full flex items-center ${
-                              isCollapsed ? 'justify-center py-2.5 px-0' : 'justify-between px-2.5 py-2'
-                            } rounded-xl text-xs font-semibold transition-all relative ${
+                            className={`w-full flex items-center rounded-xl text-xs font-semibold transition-all duration-150 relative h-9 ${
+                              isCollapsed ? 'justify-center px-0' : 'justify-between px-2.5'
+                            } ${
                               isActive
-                                ? 'bg-[#CC0000] text-white shadow-md shadow-red-500/20'
+                                ? isDark
+                                  ? 'bg-white/[0.08] text-white font-bold shadow-sm'
+                                  : 'bg-white text-slate-900 font-bold shadow-sm'
                                 : isDark
                                 ? 'text-[#F5F5F7] hover:bg-[#2C2C2E]'
-                                : 'text-slate-700 hover:bg-slate-200/70'
+                                : 'text-slate-700 hover:bg-slate-300/60'
                             }`}
                           >
-                            <div className="flex items-center gap-2.5 truncate">
-                              <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-[#CC0000]'}`} />
-                              {!isCollapsed && <span className="truncate">{item.label}</span>}
+                            {/* Barra activa -- color según el modo de marca */}
+                            {isActive && (
+                              <div
+                                className={`absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full transition-all duration-200 ${
+                                  isCollapsed ? 'hidden' : 'block'
+                                }`}
+                                style={{ background: brandTokens.activeBar }}
+                              />
+                            )}
+
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <Icon
+                                className="w-4 h-4 shrink-0 transition-colors duration-150"
+                                style={{ color: brandTokens.accent }}
+                              />
+                              <div className={`overflow-hidden transition-all duration-200 whitespace-nowrap text-left ${
+                                isCollapsed ? 'w-0 opacity-0 pointer-events-none' : 'w-auto opacity-100'
+                              }`}>
+                                <span className="truncate">{item.label}</span>
+                              </div>
                             </div>
 
+                            {/* Badge */}
                             {!isCollapsed && item.badge && (
-                              <span
-                                className={`px-1.5 py-0.5 text-[10px] font-bold rounded-full ${
-                                  isActive
-                                    ? 'bg-white/20 text-white'
-                                    : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-                                }`}
-                              >
+                              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shrink-0">
                                 {item.badge}
                               </span>
                             )}
                             {isCollapsed && item.badge && (
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 absolute top-1 right-1" />
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 absolute top-1.5 right-1.5" />
                             )}
                           </button>
                         );
                       })}
                     </div>
-                  )}
+                  </div>
                 </div>
               );
             })}
+
+            {/* Grupo "Herramientas" (Solo William) */}
+            {isWilliam && (() => {
+              const TOOLS_KEY = '🛠️ Herramientas';
+              const isToolsOpen = openGroups[TOOLS_KEY] ?? false;
+              const toolsBadges = categoriasPendientesCount + campanasPendientesCount + pesoPendientesCount;
+              const toolItems = [
+                {
+                  id: 'categorias',
+                  label: 'Categorías Pendientes',
+                  icon: AlertTriangle,
+                  badge: categoriasPendientesCount > 0 ? String(categoriasPendientesCount) : undefined,
+                  onClick: () => setShowCategoriaModal(true),
+                },
+                {
+                  id: 'campanas',
+                  label: 'Campañas Pendientes',
+                  icon: Megaphone,
+                  badge: campanasPendientesCount > 0 ? String(campanasPendientesCount) : undefined,
+                  onClick: () => setShowCampanaCategoriaModal(true),
+                },
+                {
+                  id: 'peso',
+                  label: 'Peso/Medidas Pendientes',
+                  icon: Weight,
+                  badge: pesoPendientesCount > 0 ? String(pesoPendientesCount) : undefined,
+                  onClick: () => setShowPesoModal(true),
+                },
+                {
+                  id: 'duckdb',
+                  label: 'DuckDB / Drive',
+                  icon: Database,
+                  onClick: () => setShowDataSyncModal(true),
+                },
+                {
+                  id: 'datos_manuales',
+                  label: 'Datos Manuales',
+                  icon: Wallet,
+                  onClick: () => setShowDatosManualesModal(true),
+                },
+              ];
+
+              return (
+                <div className="space-y-0.5">
+                  <button
+                    onClick={() => toggleGroup(TOOLS_KEY)}
+                    className={`w-full flex items-center justify-between px-2 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-colors overflow-hidden ${
+                      isCollapsed ? 'hidden' : 'flex'
+                    } ${
+                      isDark
+                        ? 'text-[#8E8E93] hover:text-white hover:bg-[#2C2C2E]/60'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-300/50'
+                    }`}
+                  >
+                    <span className="truncate">{TOOLS_KEY}</span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {!isToolsOpen && toolsBadges > 0 && (
+                        <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                          {toolsBadges}
+                        </span>
+                      )}
+                      <div className={`transition-transform duration-200 ${isToolsOpen ? 'rotate-180' : ''}`}>
+                        <ChevronDown className="w-3.5 h-3.5 opacity-60" />
+                      </div>
+                    </div>
+                  </button>
+
+                  <div className={`grid transition-all duration-200 ease-in-out ${
+                    isToolsOpen || isCollapsed ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+                  }`}>
+                    <div className="overflow-hidden space-y-0.5">
+                      {toolItems.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <button
+                            key={item.id}
+                            onClick={item.onClick}
+                            title={isCollapsed ? item.label : undefined}
+                            className={`w-full flex items-center rounded-xl text-xs font-semibold transition-all duration-150 relative h-9 ${
+                              isCollapsed ? 'justify-center px-0' : 'justify-between px-2.5'
+                            } ${
+                              isDark
+                                ? 'text-[#F5F5F7] hover:bg-[#2C2C2E]'
+                                : 'text-slate-700 hover:bg-slate-300/60'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <Icon className="w-4 h-4 shrink-0 text-[#CC0000]" />
+                              <div className={`overflow-hidden transition-all duration-200 whitespace-nowrap text-left ${
+                                isCollapsed ? 'w-0 opacity-0 pointer-events-none' : 'w-auto opacity-100'
+                              }`}>
+                                <span className="truncate">{item.label}</span>
+                              </div>
+                            </div>
+
+                            {!isCollapsed && item.badge && (
+                              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shrink-0">
+                                {item.badge}
+                              </span>
+                            )}
+                            {isCollapsed && item.badge && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 absolute top-1.5 right-1.5" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
-          {/* Panel de Filtros Globales */}
-          {!isCollapsed ? (
-            <div className="mx-2.5 space-y-2">
-              <div className={`p-3 rounded-2xl border space-y-2 ${
-                isDark ? 'bg-[#1C1C1E] border-[#2C2C2E]' : 'bg-white border-slate-200/80 shadow-sm'
-              }`}>
-                <div className="flex items-center justify-between">
-                  <span className={`text-[11px] font-extrabold uppercase tracking-wider ${
-                    isDark ? 'text-[#8E8E93]' : 'text-slate-400'
-                  }`}>
-                    ⚙️ Filtros Globales
-                  </span>
+          {/* Panel de Filtros Globales (con transición de opacidad y visibilidad) */}
+          <div className={`mx-2.5 space-y-2 transition-all duration-200 ${
+            isCollapsed ? 'opacity-0 pointer-events-none h-0 overflow-hidden' : 'opacity-100 h-auto'
+          }`}>
+            <div className={`rounded-2xl border overflow-hidden transition-all ${
+              isDark ? 'bg-[#1C1C1E] border-[#2C2C2E]' : 'bg-white border-slate-300/80 shadow-sm'
+            }`}>
+              <button
+                onClick={() => setShowFiltrosGlobales((prev) => !prev)}
+                className="w-full flex items-center justify-between p-3 cursor-pointer"
+              >
+                <span className={`text-[11px] font-extrabold uppercase tracking-wider ${
+                  isDark ? 'text-[#8E8E93]' : 'text-slate-600'
+                }`}>
+                  ⚙️ Filtros Globales
+                </span>
+                <div className="flex items-center gap-1.5 shrink-0">
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-red-500/10 text-[#CC0000]">
                     Filtros
                   </span>
+                  <div className={`transition-transform duration-200 ${showFiltrosGlobales ? 'rotate-180' : ''}`}>
+                    <ChevronDown className="w-3.5 h-3.5 opacity-60" />
+                  </div>
                 </div>
+              </button>
 
-                <div className="space-y-1">
+              <div className={`grid transition-all duration-200 ease-in-out ${
+                showFiltrosGlobales ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+              }`}>
+                <div className="overflow-hidden px-3 pb-3 space-y-1.5">
                   <DateRangePicker
                     startDate={startDate}
                     endDate={endDate}
@@ -396,146 +609,222 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   />
                 </div>
               </div>
-
-              {onThemeToggle && (
-                <button
-                  onClick={onThemeToggle}
-                  className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                    isDark
-                      ? 'bg-[#1C1C1E] border-[#2C2C2E] text-amber-400 hover:bg-[#2C2C2E]'
-                      : 'bg-[#1C1C1E] bg-white border-slate-200 text-amber-600 hover:bg-slate-100 shadow-sm'
-                  }`}
-                  title={isDark ? 'Modo Claro' : 'Modo Oscuro'}
-                >
-                  {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-                  <span>{isDark ? 'Modo Claro' : 'Modo Oscuro'}</span>
-                </button>
-              )}
             </div>
-          ) : null}
-        </div>
 
-        {/* Herramientas Especiales / Admin */}
-        <div className={`p-2.5 border-t text-xs space-y-2 ${
-          isDark ? 'border-[#2C2C2E] bg-[#121214]' : 'border-slate-200 bg-slate-50'
-        }`}>
-          {/* Botón de Categorías Pendientes (SKUs) */}
-          {categoriasPendientesCount > 0 && (
-            <button
-              onClick={() => setShowCategoriaModal(true)}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                isDark
-                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20'
-                  : 'bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100'
-              }`}
-              title="SKUs vendidos sin categoría asignada"
-            >
-              <div className="flex items-center gap-2 truncate">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                {!isCollapsed && <span className="truncate">Categorías</span>}
+            {onBrandModeChange && (
+              <div className="grid grid-cols-3 gap-1">
+                {(['standard', 'kaltemp', 'tompalmer'] as const).map((modo) => {
+                  const activo = brandMode === modo;
+                  const tokensBoton = getBrandTokens(modo, isDark);
+                  const etiqueta = modo === 'standard' ? 'Standard' : modo === 'kaltemp' ? 'Kaltemp' : 'Tom Palmer';
+                  return (
+                    <button
+                      key={modo}
+                      onClick={() => onBrandModeChange(modo)}
+                      title={`Modo ${etiqueta}`}
+                      className={`py-1.5 px-1 rounded-lg text-[9.5px] font-bold border transition-all truncate ${
+                        activo
+                          ? isDark ? 'text-white' : 'text-white'
+                          : isDark
+                          ? 'bg-[#1C1C1E] border-[#2C2C2E] text-[#8E8E93] hover:text-white'
+                          : 'bg-white border-slate-300/80 text-slate-500 hover:text-slate-800'
+                      }`}
+                      style={activo ? { background: tokensBoton.hairline, borderColor: 'transparent' } : undefined}
+                    >
+                      {etiqueta}
+                    </button>
+                  );
+                })}
               </div>
-              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-black shrink-0 ${
-                isDark ? 'bg-amber-500/20' : 'bg-amber-200'
-              }`}>
-                {categoriasPendientesCount}
-              </span>
-            </button>
-          )}
+            )}
 
-          {/* Botón de Campañas de Marketing Pendientes (06-ago-2026) */}
-          {campanasPendientesCount > 0 && (
-            <button
-              onClick={() => setShowCampanaCategoriaModal(true)}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                isDark
-                  ? 'bg-purple-500/10 border-purple-500/30 text-purple-400 hover:bg-purple-500/20'
-                  : 'bg-purple-50 border-purple-200 text-purple-600 hover:bg-purple-100'
-              }`}
-              title="Campañas de marketing sin categoría asignada"
-            >
-              <div className="flex items-center gap-2 truncate">
-                <Megaphone className="w-4 h-4 shrink-0" />
-                {!isCollapsed && <span className="truncate">Campañas</span>}
-              </div>
-              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-black shrink-0 ${
-                isDark ? 'bg-purple-500/20' : 'bg-purple-200'
-              }`}>
-                {campanasPendientesCount}
-              </span>
-            </button>
-          )}
+            {onThemeToggle && (
+              <button
+                onClick={onThemeToggle}
+                className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  isDark
+                    ? 'bg-[#1C1C1E] border-[#2C2C2E] text-amber-400 hover:bg-[#2C2C2E]'
+                    : 'bg-white border-slate-300/80 text-amber-700 hover:bg-slate-100 shadow-sm'
+                }`}
+                title={isDark ? 'Modo Claro' : 'Modo Oscuro'}
+              >
+                {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                <span>{isDark ? 'Modo Claro' : 'Modo Oscuro'}</span>
+              </button>
+            )}
 
-          {/* Botón Sincronización DuckDB / Drive (Solo William Garrido) */}
-          {isWilliam && (
+            {/* Última actualización */}
             <button
-              onClick={() => setShowDataSyncModal(true)}
-              className={`w-full flex items-center gap-2 ${
-                isCollapsed ? 'justify-center py-2 px-0' : 'justify-start px-2.5 py-1.5'
-              } rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                isDark
-                  ? 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20'
-                  : 'bg-red-50 border-red-200 text-[#CC0000] hover:bg-red-100'
+              onClick={cargarUltimaActualizacion}
+              title="Haz clic para refrescar el estado de sincronización"
+              className={`w-full flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-xl text-[10.5px] font-medium transition-colors cursor-pointer ${
+                isDark ? 'text-[#8E8E93] hover:text-white' : 'text-slate-500 hover:text-slate-800'
               }`}
-              title="Sincronización de Base de Datos kaltemp_matrix.duckdb"
             >
-              <Database className="w-4 h-4 text-[#CC0000] shrink-0" />
-              {!isCollapsed && <span className="truncate">DuckDB / Drive</span>}
+              <Clock className="w-3 h-3 shrink-0" />
+              <span className="truncate">Actualizado {formatUltimaActualizacion(ultimaActualizacion)}</span>
             </button>
-          )}
+          </div>
         </div>
 
         {/* Footer / Bajar Excel & Sesión */}
         <div
-          className={`p-2.5 border-t text-xs space-y-2.5 ${
-            isDark ? 'border-[#2C2C2E] bg-[#1C1C1E]' : 'border-slate-200 bg-white'
+          className={`p-2.5 border-t text-xs space-y-2 transition-all ${
+            isDark ? 'border-[#2C2C2E] bg-[#1C1C1E]' : 'border-slate-300/80 bg-[#E2E5EA]'
           }`}
         >
-          {!isCollapsed ? (
-            <div className="pb-1 border-b border-slate-200/60 dark:border-[#2C2C2E]">
+          {puedeBajarExcel && (
+            <div className="pb-1 border-b border-slate-300/70 dark:border-[#2C2C2E]">
               <button
                 onClick={handleExportExcel}
                 disabled={downloading}
-                className={`w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl text-[11px] font-bold border transition-all cursor-pointer disabled:opacity-50 ${
+                className={`w-full flex items-center justify-center gap-1.5 rounded-xl text-[11px] font-bold border transition-all cursor-pointer disabled:opacity-50 h-8 ${
                   isDark
                     ? 'bg-[#121214] border-[#2C2C2E] text-[#F5F5F7] hover:border-red-500 hover:text-[#CC0000]'
-                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-red-500 hover:text-[#CC0000]'
-                }`}
-              >
-                {downloading ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#CC0000]" />
-                    <span>Generando Excel...</span>
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-3.5 h-3.5 text-[#CC0000]" />
-                    <span>Bajar Excel Consolidado</span>
-                  </>
-                )}
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-2 pb-1 border-b border-slate-200/60 dark:border-[#2C2C2E]">
-              <button
-                onClick={handleExportExcel}
-                disabled={downloading}
-                className={`p-2 rounded-xl border transition-all cursor-pointer disabled:opacity-50 ${
-                  isDark ? 'bg-[#121214] border-[#2C2C2E] text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
+                    : 'bg-white border-slate-300 text-slate-800 hover:border-red-500 hover:text-[#CC0000] shadow-sm'
                 }`}
                 title="Bajar Excel Consolidado"
               >
                 {downloading ? (
-                  <RefreshCw className="w-4 h-4 animate-spin text-[#CC0000]" />
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#CC0000]" />
                 ) : (
-                  <Download className="w-4 h-4 text-[#CC0000]" />
+                  <Download className="w-3.5 h-3.5 text-[#CC0000]" />
                 )}
+                <div className={`overflow-hidden transition-all duration-200 whitespace-nowrap ${
+                  isCollapsed ? 'w-0 opacity-0 pointer-events-none' : 'w-auto opacity-100'
+                }`}>
+                  <span>Bajar Excel</span>
+                </div>
               </button>
             </div>
           )}
+
+          {/* Sección de Usuario */}
+          <div className="relative">
+            <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
+              <button
+                onClick={() => {
+                  if (isWilliam) setShowUserDropdown(!showUserDropdown);
+                }}
+                className={`flex items-center gap-2 min-w-0 text-left rounded-xl p-1 transition-colors ${
+                  isWilliam ? 'hover:bg-slate-300/50 dark:hover:bg-slate-500/10 cursor-pointer' : ''
+                }`}
+                title={isWilliam ? 'Cambiar sesión de usuario' : undefined}
+              >
+                <div
+                  className="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs text-white shrink-0 shadow"
+                  style={{ backgroundColor: currentUser?.avatarColor || '#CC0000' }}
+                >
+                  {userName.charAt(0)}
+                </div>
+                <div className={`overflow-hidden transition-all duration-200 whitespace-nowrap min-w-0 ${
+                  isCollapsed ? 'w-0 opacity-0 pointer-events-none' : 'w-auto opacity-100'
+                }`}>
+                  <p className="font-bold text-xs truncate flex items-center gap-1">
+                    {userName}
+                    {isWilliam && <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" />}
+                  </p>
+                  <p className={`text-[10px] truncate ${isDark ? 'text-[#8E8E93]' : 'text-slate-600'}`}>
+                    {currentUser?.rol || userEmail}
+                  </p>
+                </div>
+              </button>
+
+              {!isCollapsed && onLogout && (
+                <button
+                  onClick={onLogout}
+                  className={`p-1.5 rounded-lg border transition-all shrink-0 cursor-pointer ${
+                    isDark 
+                      ? 'bg-[#1C1C1E] border-[#2C2C2E] text-slate-400 hover:text-red-400 hover:border-red-500/30' 
+                      : 'bg-white border-slate-300 text-slate-600 hover:text-red-600 hover:border-red-300 shadow-sm'
+                  }`}
+                  title="Cerrar sesión"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Dropdown Menu de Cambio de Usuario (Solo William) */}
+            {isWilliam && showUserDropdown && (
+              <div
+                className={`absolute bottom-full ${
+                  isCollapsed ? 'left-full ml-2' : 'left-0 mb-2'
+                } w-64 rounded-2xl border shadow-2xl overflow-hidden z-50 p-1.5 ${
+                  isDark ? 'bg-[#1C1C1E] border-[#333339] text-white' : 'bg-white border-slate-300 text-slate-900'
+                }`}
+              >
+                <div className="px-3 py-2 border-b border-slate-200 dark:border-[#2C2C2E] mb-1">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-[#CC0000]">
+                    Cambiar Sesión de Usuario (RBAC)
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Selecciona un usuario para verificar sus permisos:
+                  </p>
+                </div>
+
+                <div className="max-h-60 overflow-y-auto space-y-0.5">
+                  {users.map((usr) => {
+                    const isSelected = usr.email.toLowerCase() === currentUser?.email.toLowerCase();
+                    return (
+                      <button
+                        key={usr.email}
+                        onClick={() => {
+                          impersonate(usr.id).catch((err) => console.error('No se pudo simular la sesión:', err));
+                          setShowUserDropdown(false);
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-xl text-xs flex items-center justify-between transition-colors ${
+                          isSelected
+                            ? 'bg-[#CC0000] text-white font-black'
+                            : isDark
+                            ? 'hover:bg-[#2C2C2E] text-slate-200 font-medium'
+                            : 'hover:bg-slate-100 text-slate-800 font-medium'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <div
+                            className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black text-white shrink-0"
+                            style={{ backgroundColor: usr.avatarColor }}
+                          >
+                            {usr.nombre.charAt(0)}
+                          </div>
+                          <div className="truncate">
+                            <p className="text-[11px] leading-tight truncate font-bold">{usr.nombre}</p>
+                            <p className={`text-[9px] font-mono leading-tight ${isSelected ? 'text-red-100' : 'text-slate-500'}`}>
+                              {usr.rol}
+                            </p>
+                          </div>
+                        </div>
+                        {isSelected && <UserCheck className="w-3.5 h-3.5 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="p-1.5 border-t border-slate-200 dark:border-[#2C2C2E] mt-1">
+                  <button
+                    onClick={() => {
+                      setShowUserDropdown(false);
+                      setShowModal(true);
+                    }}
+                    className="w-full py-1.5 px-3 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-[#CC0000] font-extrabold text-[11px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Shield className="w-3.5 h-3.5" /> Ver Matriz de Permisos
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </aside>
 
-      {/* Modales trasladados a la Sidebar */}
+      {/* Modales */}
+      <UserManagementModal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        isDark={isDark}
+      />
+
       <DataSyncModal
         isOpen={showDataSyncModal}
         onClose={() => setShowDataSyncModal(false)}
@@ -554,6 +843,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
         onClose={() => { setShowCampanaCategoriaModal(false); cargarCampanasPendientes(); }}
         isDark={isDark}
         onCambiosGuardados={cargarCampanasPendientes}
+      />
+
+      <PesoAlertaModal
+        isOpen={showPesoModal}
+        onClose={() => { setShowPesoModal(false); cargarPesoPendientes(); }}
+        isDark={isDark}
+        onCambiosGuardados={cargarPesoPendientes}
+      />
+
+      <DatosManualesModal
+        isOpen={showDatosManualesModal}
+        onClose={() => setShowDatosManualesModal(false)}
+        isDark={isDark}
       />
     </>
   );

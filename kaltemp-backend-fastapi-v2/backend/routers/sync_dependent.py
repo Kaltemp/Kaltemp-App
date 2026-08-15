@@ -1,3 +1,5 @@
+# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\routers\sync_dependent.py
+# (respaldar antes: Copy-Item sync_dependent.py sync_dependent.py.bak)
 """
 Módulos que dependen de tablas pobladas por sync_bsale_operativo.py:
   - stock_bsale            (Stock por bodega)
@@ -17,21 +19,8 @@ mismos endpoints empiezan a devolver datos reales sin tocar una línea.
 from datetime import date, timedelta, datetime
 from fastapi import APIRouter, Query
 from db import get_connection
-from categorias_db import get_categorias_connection, init_categorias_db
 
 router = APIRouter(prefix="/api", tags=["sync-tables"])
-
-
-def _mapa_categorias_manual() -> dict:
-    """{SKU: categoría} asignado a mano desde la alerta "📢 Categorías" del
-    Sidebar -- vive en kaltemp_categorias.db (SQLite), separado de
-    kaltemp_matrix.duckdb. Es la fuente MÁS confiable de categoría por SKU
-    porque cubre incluso SKUs que nunca se han vendido (y por lo tanto
-    nunca aparecen en `ventas`, la única fuente que se usaba antes acá)."""
-    init_categorias_db()
-    with get_categorias_connection() as con:
-        filas = con.execute("SELECT sku, categoria FROM categorias_manual").fetchall()
-        return {row["sku"].strip().upper(): row["categoria"] for row in filas}
 
 
 def _tabla_existe(con, nombre_tabla: str) -> bool:
@@ -89,33 +78,24 @@ def get_stock():
         """, [f_ini, f_fin]).fetchall())
 
         # stock_bsale no trae categoría ni costo unitario -- se cruza por SKU
-        # contra `ventas` (histórico) para heredar la categoría real con la
-        # que se vendió ese SKU, PERO con dos correcciones (07-ago-2026):
-        #   1. arg_max(CATEGORIA, FECHA_OBJ) en vez de ANY_VALUE -- si el SKU
-        #      tiene filas viejas "Sin Tipo" y filas nuevas ya categorizadas,
-        #      ANY_VALUE podía quedarse con cualquiera de las dos al azar;
-        #      arg_max toma la categoría de la venta más RECIENTE.
-        #   2. categorias_manual (misma fuente que usa sync_ventas.py) tiene
-        #      PRIORIDAD y además cubre SKUs que nunca se han vendido -- esos
-        #      jamás aparecen en `ventas`, así que antes quedaban "Sin
-        #      categoría" para siempre sin importar que ya estuvieran
-        #      categorizados a mano.
+        # contra `ventas` (histórico completo) para heredar la categoría real
+        # con la que se vendió ese SKU. Costo unitario NO está disponible en
+        # los datos que sincroniza Bsale para stock, así que no se muestra
+        # "Valor de Inventario" (mejor omitirlo que inventar un costo).
         categoria_por_sku_raw = con.execute("""
-            SELECT SKU_BSALE, arg_max(CATEGORIA, FECHA_OBJ)
+            SELECT SKU_BSALE, ANY_VALUE(CATEGORIA)
             FROM ventas
             WHERE SKU_BSALE IS NOT NULL AND CATEGORIA IS NOT NULL AND TRIM(CATEGORIA) != ''
             GROUP BY SKU_BSALE
         """).fetchall()
         categoria_por_sku = {str(sku).strip().upper(): cat for sku, cat in categoria_por_sku_raw}
-        categoria_por_sku.update(_mapa_categorias_manual())
 
         # El nombre de producto que trae el stock de Bsale suele ser genérico
         # (ej. "ESTUFAS", "CALEFACTOR MURAL") -- se prioriza el nombre
         # completo real que ya usa el resto de la app (Ventas por SKU),
-        # heredado del mismo cruce por SKU contra `ventas` (mismo fix de
-        # arg_max -- toma el nombre de la venta más reciente, no uno al azar).
+        # heredado del mismo cruce por SKU contra `ventas`.
         producto_por_sku_raw = con.execute("""
-            SELECT SKU_BSALE, arg_max(PRODUCTO, FECHA_OBJ)
+            SELECT SKU_BSALE, ANY_VALUE(PRODUCTO)
             FROM ventas
             WHERE SKU_BSALE IS NOT NULL AND PRODUCTO IS NOT NULL AND TRIM(PRODUCTO) != ''
             GROUP BY SKU_BSALE
@@ -213,19 +193,17 @@ def get_pendientes_despacho():
         """).fetchall()
 
         # Mismo cruce por SKU contra `ventas` que ya usa el módulo Stock,
-        # para categoría real y nombre de producto completo -- mismo fix
-        # (arg_max + categorias_manual) que en get_stock() (07-ago-2026).
+        # para categoría real y nombre de producto completo.
         categoria_por_sku_raw = con.execute("""
-            SELECT SKU_BSALE, arg_max(CATEGORIA, FECHA_OBJ)
+            SELECT SKU_BSALE, ANY_VALUE(CATEGORIA)
             FROM ventas
             WHERE SKU_BSALE IS NOT NULL AND CATEGORIA IS NOT NULL AND TRIM(CATEGORIA) != ''
             GROUP BY SKU_BSALE
         """).fetchall()
         categoria_por_sku = {str(sku).strip().upper(): cat for sku, cat in categoria_por_sku_raw}
-        categoria_por_sku.update(_mapa_categorias_manual())
 
         producto_por_sku_raw = con.execute("""
-            SELECT SKU_BSALE, arg_max(PRODUCTO, FECHA_OBJ)
+            SELECT SKU_BSALE, ANY_VALUE(PRODUCTO)
             FROM ventas
             WHERE SKU_BSALE IS NOT NULL AND PRODUCTO IS NOT NULL AND TRIM(PRODUCTO) != ''
             GROUP BY SKU_BSALE
@@ -495,11 +473,45 @@ def get_notas_credito():
 
 # ------------------------------------------------------------------
 # CONTROL LOGÍSTICO — mapeo desde `enviame_despachos`, sincronizada por
-# sync_enviame.py, con VENDEDOR y PRODUCTO(S) cruzados desde `ventas`
-# por NUMERO_DOCUMENTO (03-ago-2026).
+# sync_enviame.py.
 # ------------------------------------------------------------------
 @router.get("/enviame-shipments")
-def get_enviame_shipments():
+def get_enviame_shipments(
+    fecha_inicio: date = Query(None),
+    fecha_fin: date = Query(None),
+):
+    """
+    Historial de cambios relevantes en este endpoint (12/13-ago-2026):
+
+    1) Filtro de fecha: antes no existía -- siempre traía los últimos 2000
+       registros por FECHA_CREACION DESC sin importar el sidebar. Ahora
+       fecha_inicio/fecha_fin son opcionales: si llegan ambos, filtra por
+       TRY_CAST(FECHA_CREACION AS DATE) BETWEEN ? AND ?.
+
+    2) fechaEnvio: antes NO se incluía en la respuesta (solo se usaba
+       FECHA_CREACION para el ORDER BY). Ahora viaja por fila.
+
+    3) fechaEntrega: viene de la columna FECHA_ENTREGA en enviame_despachos,
+       poblada por sync_enviame.py con status.created_at de la API de
+       Envíame cuando el estado es "Entregado".
+
+    4) vendedor / producto / cobroBsale: MOVIDO a tabla precalculada
+       (13-ago-2026). Antes este endpoint calculaba el cruce con `ventas`
+       EN VIVO en cada request (JOIN con validación de fecha por número de
+       referencia). Ahora solo LEE `enviame_cruce_ventas`, poblada por
+       sync/sync_cruce_enviame_bsale.py -- que corre el cruce POR ETAPAS
+       (1: nombre+fecha, 2: número+fecha como respaldo, 3: texto de
+       descripción, pendiente hasta que Envíame habilite ese campo por
+       API) una sola vez por ciclo de sync, no en cada carga del módulo.
+       Ver ese script para el detalle completo y la justificación de cada
+       etapa con datos reales de los diagnósticos.
+
+    5) costoEnviame: FIX de bug propio -- en una ronda anterior el campo
+       había quedado escrito como "costoEnvio" (sin la "e" final) en vez
+       de "costoEnviame", que es la key que efectivamente lee
+       LogisticsView.tsx. Esto hacía que la columna "Costo Envíame" se
+       viera vacía en pantalla AUNQUE el dato sí existiera en la base.
+    """
     with get_connection() as con:
         if not _tabla_existe(con, "enviame_despachos"):
             return {
@@ -508,54 +520,55 @@ def get_enviame_shipments():
                 "items": [],
             }
 
-        # VENDEDOR y PRODUCTO(S) se cruzan desde `ventas` por NUMERO_DOCUMENTO.
-        # Esto SOLO calza para Showroom/Distribuidores (N_ENVIO_REF = # de
-        # documento Bsale ahí). Para D2C, N_ENVIO_REF es el # de pedido de
-        # Shopify -- no existe en `ventas`, así que sale vacío a propósito
-        # (D2C es venta por catálogo, no tiene vendedor asignado; es
-        # coherente, no es un bug). Si `ventas` no existe aún en esta base,
-        # se degrada sin romper: vendedor/producto quedan vacíos para todos.
-        tiene_ventas = _tabla_existe(con, "ventas")
+        columnas = {
+            row[0] for row in con.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'enviame_despachos'"
+            ).fetchall()
+        }
+        select_fecha_entrega = "e.FECHA_ENTREGA" if "FECHA_ENTREGA" in columnas else "NULL"
 
-        if tiene_ventas:
-            filas = con.execute("""
+        params_fecha = [fecha_inicio, fecha_fin] if (fecha_inicio and fecha_fin) else []
+        filtro_sql = "WHERE TRY_CAST(e.FECHA_CREACION AS DATE) BETWEEN ? AND ?" if params_fecha else ""
+
+        tiene_cruce = _tabla_existe(con, "enviame_cruce_ventas")
+
+        if tiene_cruce:
+            filas = con.execute(f"""
                 SELECT
                     e.ID_INTERNO, e.N_ENVIO_REF, e.CLIENTE, e.TELEFONO, e.COMUNA, e.DIRECCION,
                     e.COURIER, e.ESTADO, e.COSTO_ENVIO, e.TRACKING_NUMBER, e.TRACKING_URL,
-                    e.ES_INCIDENCIA, v.VENDEDOR, v.PRODUCTOS
+                    e.ES_INCIDENCIA, e.FECHA_CREACION, {select_fecha_entrega},
+                    c.VENDEDOR, c.PRODUCTO, c.COBRO_BSALE_DESPACHO
                 FROM enviame_despachos e
-                LEFT JOIN (
-                    SELECT
-                        CAST(NUMERO_DOCUMENTO AS VARCHAR) AS NUMERO_DOCUMENTO,
-                        ANY_VALUE(VENDEDOR) AS VENDEDOR,
-                        STRING_AGG(DISTINCT PRODUCTO, ', ') AS PRODUCTOS
-                    FROM ventas
-                    WHERE NUMERO_DOCUMENTO IS NOT NULL
-                    GROUP BY CAST(NUMERO_DOCUMENTO AS VARCHAR)
-                ) v ON v.NUMERO_DOCUMENTO = e.N_ENVIO_REF
+                LEFT JOIN enviame_cruce_ventas c ON c.ID_INTERNO = e.ID_INTERNO
+                {filtro_sql}
                 ORDER BY e.FECHA_CREACION DESC
                 LIMIT 2000
-            """).fetchall()
+            """, params_fecha).fetchall()
         else:
             filas = [
-                f + (None, None) for f in con.execute("""
+                f + (None, None, None) for f in con.execute(f"""
                     SELECT
                         ID_INTERNO, N_ENVIO_REF, CLIENTE, TELEFONO, COMUNA, DIRECCION,
                         COURIER, ESTADO, COSTO_ENVIO, TRACKING_NUMBER, TRACKING_URL,
-                        ES_INCIDENCIA
-                    FROM enviame_despachos
+                        ES_INCIDENCIA, FECHA_CREACION, {select_fecha_entrega}
+                    FROM enviame_despachos e
+                    {filtro_sql.replace('e.FECHA_CREACION', 'FECHA_CREACION')}
                     ORDER BY FECHA_CREACION DESC
                     LIMIT 2000
-                """).fetchall()
+                """, params_fecha).fetchall()
             ]
 
     items = [{
         "id": str(f[0]), "ref": f[1], "cliente": f[2], "telefono": f[3] or "",
         "comuna": f[4] or "", "direccion": f[5] or "", "courier": f[6] or "",
-        "estado": f[7] or "", "costoEnvio": f[8] or 0,
+        "estado": f[7] or "", "costoEnviame": f[8] or 0,
         "trackingNumber": f[9] or "", "trackingUrl": f[10] or "",
         "esIncidencia": bool(f[11]),
-        "vendedor": f[12] or "", "producto": f[13] or "",
+        "fechaEnvio": f[12] or None,
+        "fechaEntrega": f[13] or None,
+        "vendedor": f[14] or "", "producto": f[15] or "", "cobroBsale": f[16] or 0,
     } for f in filas]
 
     return {"disponible": True, "mensaje": None, "items": items}

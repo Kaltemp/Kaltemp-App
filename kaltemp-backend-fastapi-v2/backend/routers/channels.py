@@ -1,10 +1,9 @@
 """
 Módulo Principal — Endpoint /api/channels e /api/indicadores-d2c
 
-Replica exactamente la lógica de cal_kpis() y el agrupado por CANAL
-que teníamos en app.py (Streamlit), pero calculado en SQL puro sobre
-DuckDB para máxima velocidad, y devuelto en el shape exacto de la
-interfaz ChannelSale (src/types.ts).
+Calculado en SQL puro sobre DuckDB, respondiendo dinámicamente a todos los
+filtros globales para D2C. Tendencia Semanal Anual (Semanas 01 a 52 / YTD 2026 vs 2025 YoY)
+independiente de la ventana corta de fechas.
 """
 from datetime import date, timedelta
 from fastapi import APIRouter, Query
@@ -16,15 +15,16 @@ import unicodedata
 router = APIRouter(prefix="/api", tags=["channels"])
 
 
-# Misma agregación que usaba cal_kpis(): BSALE vs FULL (Shopify Full,
-# Falabella API, etc.) se distinguen por la columna ORIGEN.
-#
-# MARGEN (05-ago-2026, confirmado con William): las líneas de servicio
-# técnico sin SKU real (reparaciones/repuestos genéricos/despachos con
-# glosa libre de Bsale, marcadas como ES_GLOSA_SERVICIO por sync_ventas.py)
-# SÍ cuentan en la venta (totalBruto/bsale/full), pero se excluyen de
-# contribucion/neto -- así no distorsionan el % de margen de ningún canal
-# ni el Margen Frontal general, aunque su monto en $ sigue sumando.
+SKUS_TOM_PALMER = [
+    "TPPK0003", "TPPK0001", "TPPK0002", "KLHT0013", "KLPB0018",
+    "KLPB0019", "KLPB0020", "KLPB0022", "KLPB0023", "KLPB0029",
+    "KLAP0047", "KLSU0002", "KLSU0001", "KLSU0003", "KLSU0004",
+    "LOHE0001", "LOHE0002", "LOHE0003", "LOHE0004", "LOJM0001",
+    "LOJM0002", "LOIE0002", "LOIE0004", "LOIE0005", "LOIE0001",
+    "KLRO0002", "KLRO0005", "KLRO0004", "KLRO0006", "KLBC0095"
+]
+
+
 _BASE_QUERY = """
     SELECT
         CANAL AS canal,
@@ -40,7 +40,6 @@ _BASE_QUERY = """
 
 
 def _fetch_period(con, fecha_inicio: date, fecha_fin: date, vendedores: list[str] | None, categorias: list[str] | None) -> dict:
-    """Devuelve {canal: {bsale, full, totalBruto, contribucion, neto, txs}} para un rango."""
     sql = _BASE_QUERY
     params: list = [fecha_inicio, fecha_fin]
     if vendedores:
@@ -69,14 +68,8 @@ def get_channels(
     vendedores: str = Query(None, description="Lista separada por comas para filtrar por VENDEDOR"),
     categorias: str = Query(None, description="Lista separada por comas para filtrar por CATEGORIA"),
 ):
-    """
-    Devuelve la lista de canales con sus comparativos WOW / YOY / 2YOY,
-    en el mismo formato que src/types.ts -> ChannelSale.
-    """
     lista_vendedores = [v.strip() for v in vendedores.split(",") if v.strip()] if vendedores else None
     lista_categorias = [c.strip() for c in categorias.split(",") if c.strip()] if categorias else None
-
-    dias = (fecha_fin - fecha_inicio).days + 1
 
     wow_inicio, wow_fin = fecha_inicio - timedelta(days=7), fecha_fin - timedelta(days=7)
     yoy_inicio, yoy_fin = fecha_inicio.replace(year=fecha_inicio.year - 1), fecha_fin.replace(year=fecha_fin.year - 1)
@@ -134,25 +127,7 @@ def get_channels(
 
 
 # ============================================================
-# INDICADORES D2C (reescrito 06-ago-2026)
-#
-# Antes: "inversion"/"inversionYoy"/"ventaYoy"/"tkpYoy" eran
-# multiplicadores inventados (venta*0.15, venta*0.12, etc.), y el
-# endpoint ignoraba por completo fecha_inicio/fecha_fin (siempre traía
-# el histórico completo). Además "Venta D2C" sumaba TODOS los canales,
-# no solo D2C. Todo esto se corrige acá:
-#   - Fecha real: se filtra ventas/GA4/marketing por fecha_inicio/
-#     fecha_fin, y el "YoY" es una consulta real al mismo rango del
-#     año anterior (no un multiplicador fijo).
-#   - Venta D2C: filtrada a CANAL = 'D2C' (antes sumaba todo).
-#   - Inversión POR CATEGORÍA: se reparte el gasto real de marketing
-#     (mkt_inversion_meta + mkt_inversion_google) según a qué categoría
-#     de producto corresponde cada campaña (por palabras clave en el
-#     nombre, igual criterio que ya usamos para prestar imágenes entre
-#     Meta y Google). Las campañas que no calzan con ninguna categoría
-#     (Brand, Shopping, Catálogo) quedan fuera del reparto -- su gasto
-#     sigue sumando al total general, solo no se le puede atribuir a
-#     una categoría de producto específica.
+# INDICADORES D2C
 # ============================================================
 
 def _normalizar_texto(s) -> str:
@@ -162,9 +137,6 @@ def _normalizar_texto(s) -> str:
     return s.replace("-", " ").replace("_", " ")
 
 
-# Palabra clave -> nombre de categoría REAL (debe calzar con los
-# valores que existen en ventas.CATEGORIA / categorias_manual, no con
-# los códigos internos que se usan para prestar imágenes en marketing).
 _MAPA_CATEGORIA_REAL = [
     ("SANITARIA", "BC Agua Sanitaria"),
     ("PISCINA", "Temperado de Piscina"),
@@ -191,8 +163,6 @@ def _mapear_categoria_real(nombre_campana: str) -> str | None:
 
 
 def _mapa_categorias_manual_campanas() -> dict:
-    """{nombre_campana: categoria} asignado a mano desde la alerta de la
-    app (prioridad sobre la adivinanza por palabra clave)."""
     from categorias_db import get_categorias_connection, init_categorias_db
     init_categorias_db()
     with get_categorias_connection() as con:
@@ -200,22 +170,13 @@ def _mapa_categorias_manual_campanas() -> dict:
         return {row["campana"]: row["categoria"] for row in filas}
 
 
-def _gasto_marketing_por_categoria(con, fecha_inicio, fecha_fin, marca: str = "Kaltemp") -> dict:
-    """
-    {categoria_real: gasto_total} sumando Meta + Google en el rango de
-    fechas dado, repartido por categoría de producto, filtrado a UNA
-    marca (columna "Marca" que ya viene en mkt_inversion_meta/google).
-    Prioridad de categoría: 1) asignación manual desde la app
-    (campanas_categoria) -- 2) adivinanza por palabra clave, como
-    respaldo. Devuelve también "_total" con el gasto total sin
-    repartir (Brand/Shopping/etc. que no calzan con ninguna categoría).
-
-    Multi-categoría (07-ago-2026): la asignación manual puede guardar
-    varias categorías separadas por coma (ej. "Mangueras, Herramientas,
-    Iluminación" para una campaña de liquidación general). En ese caso
-    el gasto de esa campaña se reparte en partes iguales entre todas
-    las categorías listadas.
-    """
+def _gasto_marketing_por_categoria(
+    con,
+    fecha_inicio,
+    fecha_fin,
+    marca: str = "Kaltemp",
+    categorias: list[str] | None = None
+) -> dict:
     resultado: dict = {"_total": 0.0}
     mapa_manual = _mapa_categorias_manual_campanas()
     tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
@@ -237,63 +198,193 @@ def _gasto_marketing_por_categoria(con, fecha_inicio, fecha_fin, marca: str = "K
         df["_fecha"] = pd.to_datetime(df[col_fi], errors="coerce")
         df["_gasto"] = pd.to_numeric(df[col_gasto], errors="coerce").fillna(0.0)
         df_rango = df[(df["_fecha"] >= pd.Timestamp(fecha_inicio)) & (df["_fecha"] <= pd.Timestamp(fecha_fin))]
-        if col_marca:
+        if col_marca and col_marca in df_rango.columns:
             df_rango = df_rango[df_rango[col_marca] == marca]
 
         for _, fila in df_rango.iterrows():
             gasto = float(fila["_gasto"])
-            resultado["_total"] += gasto
             nombre_campana = str(fila[col_campana]).strip()
-            categoria_raw = mapa_manual.get(nombre_campana) or _mapear_categoria_real(nombre_campana)
-            if categoria_raw:
-                # Soporta 1 o varias categorías separadas por coma (ej.
-                # una campaña de liquidación que promociona Mangueras,
-                # Herramientas e Iluminación a la vez) -- el gasto se
-                # reparte en partes iguales entre todas las que calcen,
-                # ya que Meta/Google no dan el desglose interno por
-                # categoría dentro de una misma campaña (07-ago-2026).
-                categorias_lista = [c.strip() for c in categoria_raw.split(",") if c.strip()]
-                if categorias_lista:
-                    gasto_por_cat = gasto / len(categorias_lista)
-                    for cat in categorias_lista:
-                        resultado[cat] = resultado.get(cat, 0.0) + gasto_por_cat
+            cat_camp = mapa_manual.get(nombre_campana) or _mapear_categoria_real(nombre_campana)
+
+            if categorias and cat_camp and not any(c.lower() == cat_camp.lower() for c in categorias):
+                continue
+
+            resultado["_total"] += gasto
+            if cat_camp:
+                resultado[cat_camp] = resultado.get(cat_camp, 0.0) + gasto
 
     return resultado
 
 
-def _ventas_d2c_periodo(con, fecha_inicio, fecha_fin, marca: str = "Kaltemp") -> dict:
+def _calcular_tendencia_semanal_d2c(
+    df_ga4_full,
+    con,
+    marca: str = "Kaltemp",
+    categorias: list[str] | None = None
+) -> list:
     """
-    Venta D2C real + desglose por categoría, para un rango de fechas Y
-    una marca. Regla confirmada 06-ago-2026 con William:
-      - Kaltemp: CANAL = 'D2C' específicamente.
-      - Tom Palmer: TODO lo que cae bajo CANAL = 'Tom Palmer' (aún no
-        tienen el mismo desglose de canales que Kaltemp -- todo su
-        canal ES su D2C por ahora).
+    Calcula la tendencia semanal anual (Sem 01 a semana actual YTD)
+    para el año actual (2026) y su comparativo YoY (2025).
     """
-    filtro_canal = "UPPER(CANAL) = 'TOM PALMER'" if marca == "Tom Palmer" else "UPPER(CANAL) = 'D2C'"
+    today = date.today()
+    anio_actual = today.year
+    anio_yoy = anio_actual - 1
 
-    fila_total = con.execute(f"""
-        SELECT COALESCE(SUM(BRUTO_TOTAL), 0), COUNT(DISTINCT DOCUMENTO)
-        FROM ventas
-        WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ? AND {filtro_canal}
-    """, [fecha_inicio, fecha_fin]).fetchone()
+    tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
+    filas_gasto = []
+    mapa_manual = _mapa_categorias_manual_campanas()
 
-    filas_cat = con.execute(f"""
-        SELECT CATEGORIA, SUM(BRUTO_TOTAL) AS venta, COUNT(DISTINCT DOCUMENTO) AS txs
-        FROM ventas
-        WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ? AND {filtro_canal}
-        GROUP BY CATEGORIA
-    """, [fecha_inicio, fecha_fin]).fetchall()
+    for tabla in ("mkt_inversion_meta", "mkt_inversion_google"):
+        if tabla not in tables:
+            continue
+        df_mkt = con.execute(f"SELECT * FROM {tabla}").df()
+        if df_mkt.empty:
+            continue
 
-    por_categoria = {
-        str(cat): {"venta": float(venta or 0), "txs": int(txs or 0)}
-        for cat, venta, txs in filas_cat
-        if cat and str(cat) not in ("nan", "None", "")
+        col_campana = next((c for c in df_mkt.columns if "campa" in c.lower()), None)
+        col_gasto = next((c for c in df_mkt.columns if "gasto" in c.lower()), None)
+        col_fi = next((c for c in df_mkt.columns if "fecha inicio" in c.lower().replace("ó", "o")), None)
+        col_marca = next((c for c in df_mkt.columns if c.lower() == "marca"), None)
+        if not (col_gasto and col_fi):
+            continue
+
+        df_mkt["_fecha"] = pd.to_datetime(df_mkt[col_fi], errors="coerce")
+        df_mkt["_gasto"] = pd.to_numeric(df_mkt[col_gasto], errors="coerce").fillna(0.0)
+
+        if col_marca and col_marca in df_mkt.columns:
+            df_mkt = df_mkt[df_mkt[col_marca] == marca]
+
+        for _, fila in df_mkt.iterrows():
+            if pd.notnull(fila["_fecha"]):
+                dt = fila["_fecha"]
+                if dt.year in (anio_actual, anio_yoy):
+                    nombre_campana = str(fila[col_campana]).strip() if col_campana else ""
+                    cat_camp = mapa_manual.get(nombre_campana) or _mapear_categoria_real(nombre_campana)
+                    if categorias and cat_camp and not any(c.lower() == cat_camp.lower() for c in categorias):
+                        continue
+                    filas_gasto.append({"fecha": dt, "gasto": float(fila["_gasto"]), "anio": dt.year})
+
+    df_spend = pd.DataFrame(filas_gasto)
+
+    semana_actual_num = today.isocalendar().week
+    semanas_lista = [f"Sem {w:02d}" for w in range(1, semana_actual_num + 1)]
+
+    res_dict = {
+        w: {"sessions": 0, "sessionsYoy": 0, "spend": 0.0, "spendYoy": 0.0}
+        for w in semanas_lista
     }
 
+    # Sesiones GA4 (2026 vs 2025)
+    if not df_ga4_full.empty and "_fecha" in df_ga4_full.columns and "SESIONES" in df_ga4_full.columns:
+        df_valid = df_ga4_full[df_ga4_full["_fecha"].notnull()].copy()
+        df_valid["_anio"] = df_valid["_fecha"].dt.year
+        df_valid["_semana"] = df_valid["_fecha"].apply(lambda d: f"Sem {d.isocalendar().week:02d}")
+
+        for _, row in df_valid.iterrows():
+            sem = row["_semana"]
+            anio = row["_anio"]
+            ses = int(row["SESIONES"])
+
+            if sem in res_dict:
+                if anio == anio_actual:
+                    res_dict[sem]["sessions"] += ses
+                elif anio == anio_yoy:
+                    res_dict[sem]["sessionsYoy"] += ses
+
+    # Gasto MKT (2026 vs 2025)
+    if not df_spend.empty:
+        df_spend["_semana"] = df_spend["fecha"].apply(lambda d: f"Sem {d.isocalendar().week:02d}")
+        for _, row in df_spend.iterrows():
+            sem = row["_semana"]
+            anio = row["anio"]
+            gasto = float(row["gasto"])
+
+            if sem in res_dict:
+                if anio == anio_actual:
+                    res_dict[sem]["spend"] += gasto
+                elif anio == anio_yoy:
+                    res_dict[sem]["spendYoy"] += gasto
+
+    weekly_list = []
+    for sem in semanas_lista:
+        weekly_list.append({
+            "week": sem,
+            "sessions": res_dict[sem]["sessions"],
+            "sessionsYoy": res_dict[sem]["sessionsYoy"],
+            "spend": round(res_dict[sem]["spend"], 2),
+            "spendYoy": round(res_dict[sem]["spendYoy"], 2)
+        })
+
+    return weekly_list
+
+
+def _ventas_d2c_periodo(
+    con,
+    fecha_inicio,
+    fecha_fin,
+    marca: str = "Kaltemp",
+    categorias: list[str] | None = None,
+    vendedores: list[str] | None = None,
+    bodegas: list[str] | None = None
+) -> dict:
+    filtro_canal = """(
+        UPPER(CANAL) IN ('D2C', 'SHOWROOM')
+        OR UPPER(VENDEDOR) LIKE '%ANDES%GEAR%'
+        OR UPPER(VENDEDOR) LIKE '%ANDESGEAR%'
+    )"""
+
+    placeholders_sku = ", ".join(["?"] * len(SKUS_TOM_PALMER))
+    if marca == "Tom Palmer":
+        filtro_marca = f"UPPER(SKU_BSALE) IN ({placeholders_sku})"
+    else:
+        filtro_marca = f"(SKU_BSALE IS NULL OR UPPER(SKU_BSALE) NOT IN ({placeholders_sku}))"
+
+    sql_where = f"WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ? AND {filtro_canal} AND {filtro_marca}"
+    params = [fecha_inicio, fecha_fin] + SKUS_TOM_PALMER
+
+    if categorias:
+        placeholders = ", ".join(["?"] * len(categorias))
+        sql_where += f" AND CATEGORIA IN ({placeholders})"
+        params += categorias
+
+    if vendedores:
+        placeholders = ", ".join(["?"] * len(vendedores))
+        sql_where += f" AND UPPER(VENDEDOR) IN ({placeholders})"
+        params += [v.upper() for v in vendedores]
+
+    if bodegas:
+        placeholders = ", ".join(["?"] * len(bodegas))
+        sql_where += f" AND BODEGA IN ({placeholders})"
+        params += bodegas
+
+    filas_cat = con.execute(f"""
+        SELECT 
+            CASE 
+                WHEN ES_GLOSA_SERVICIO THEN 'Despachos y Servicios'
+                WHEN CATEGORIA IS NULL OR TRIM(CATEGORIA) = '' THEN 'Sin Categoría'
+                ELSE CATEGORIA 
+            END AS cat_nombre,
+            SUM(BRUTO_TOTAL) AS venta, 
+            COUNT(DISTINCT DOCUMENTO) AS txs
+        FROM ventas
+        {sql_where}
+        GROUP BY cat_nombre
+    """, params).fetchall()
+
+    por_categoria = {}
+    venta_acumulada = 0.0
+    txs_acumuladas = 0
+
+    for cat_nombre, venta, txs in filas_cat:
+        v = float(venta or 0)
+        t = int(txs or 0)
+        por_categoria[str(cat_nombre)] = {"venta": v, "txs": t}
+        venta_acumulada += v
+        txs_acumuladas += t
+
     return {
-        "venta_total": float(fila_total[0] or 0),
-        "txs_total": int(fila_total[1] or 0),
+        "venta_total": venta_acumulada,
+        "txs_total": txs_acumuladas,
         "por_categoria": por_categoria,
     }
 
@@ -309,27 +400,15 @@ def get_d2c_performance(
     bodega: Optional[str] = Query(None),
     marca: str = Query("Kaltemp", description="Kaltemp o Tom Palmer")
 ):
-    """
-    Devuelve los Indicadores D2C (GA4 + Mkt Inversión + Ventas D2C + TACoS + Funnel).
-    Todo real: venta D2C filtrada por canal, inversión repartida por
-    categoría según campañas reales, y comparativo YoY con el mismo
-    rango del año anterior (no multiplicadores inventados).
-
-    Marca (06-ago-2026): Kaltemp usa CANAL='D2C'; Tom Palmer usa
-    TODO su CANAL='Tom Palmer' (confirmado con William -- Tom Palmer
-    no tiene el mismo desglose de canales todavía). GA4 -- PENDIENTE:
-    ga4_metricas hoy es 100% del sitio de Kaltemp (kaltemp.cl); Tom
-    Palmer (tompalmer.cl) tiene su propia propiedad de GA4 que aún no
-    se sincroniza -- por eso, si marca="Tom Palmer", las métricas de
-    sesiones/rebote/funnel salen en 0 en vez de mostrar por error los
-    números de Kaltemp. Se activa solo cuando ga4_metricas traiga una
-    columna "Marca" (mismo patrón que mkt_inversion_meta/google).
-    """
     try:
         if not fecha_fin:
             fecha_fin = date.today()
         if not fecha_inicio:
             fecha_inicio = fecha_fin - timedelta(days=29)
+
+        lista_categorias = [c.strip() for c in categoria.split(",") if c.strip()] if categoria else None
+        lista_vendedores = [v.strip() for v in vendedor.split(",") if v.strip()] if vendedor else None
+        lista_bodegas = [b.strip() for b in bodega.split(",") if b.strip()] if bodega else None
 
         yoy_inicio = fecha_inicio.replace(year=fecha_inicio.year - 1)
         yoy_fin = fecha_fin.replace(year=fecha_fin.year - 1)
@@ -337,9 +416,7 @@ def get_d2c_performance(
         with get_connection() as con:
             tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
 
-            # --- GA4 (filtrado por fecha; Kaltemp y Tom Palmer viven en
-            # tablas SEPARADAS -- ga4_metricas es de Kaltemp,
-            # ga4_metricas_tompalmer es de Tom Palmer, 06-ago-2026) ---
+            df_ga4_full = pd.DataFrame()
             df_ga4 = pd.DataFrame()
             df_ga4_yoy = pd.DataFrame()
             ga4_disponible_para_marca = True
@@ -354,10 +431,8 @@ def get_d2c_performance(
                     df_ga4 = df_ga4_full[(df_ga4_full["_fecha"] >= pd.Timestamp(fecha_inicio)) & (df_ga4_full["_fecha"] <= pd.Timestamp(fecha_fin))]
                     df_ga4_yoy = df_ga4_full[(df_ga4_full["_fecha"] >= pd.Timestamp(yoy_inicio)) & (df_ga4_full["_fecha"] <= pd.Timestamp(yoy_fin))]
                 else:
-                    df_ga4 = df_ga4_full  # sin columna de fecha reconocible -- no se puede filtrar, se usa todo
+                    df_ga4 = df_ga4_full
             elif marca != "Kaltemp":
-                # Todavía no existe ga4_metricas_tompalmer -- no
-                # inventamos números para Tom Palmer.
                 ga4_disponible_para_marca = False
 
             def _sesiones(df):
@@ -373,18 +448,27 @@ def get_d2c_performance(
             checkouts = int(df_ga4["CHECKOUTS"].sum()) if not df_ga4.empty and "CHECKOUTS" in df_ga4.columns else 0
             txs = _txs_ga4(df_ga4)
 
-            mob = int(df_ga4[df_ga4["DISPOSITIVO"].astype(str).str.upper() == "MOBILE"]["SESIONES"].sum()) if not df_ga4.empty and "DISPOSITIVO" in df_ga4.columns else 0
-            desk = int(df_ga4[df_ga4["DISPOSITIVO"].astype(str).str.upper() == "DESKTOP"]["SESIONES"].sum()) if not df_ga4.empty and "DISPOSITIVO" in df_ga4.columns else 0
+            # Clasificación de Dispositivos
+            if not df_ga4.empty and "DISPOSITIVO" in df_ga4.columns and "SESIONES" in df_ga4.columns:
+                disp_clean = df_ga4["DISPOSITIVO"].astype(str).str.strip().str.upper()
+                mob = int(df_ga4[disp_clean.str.contains("MOB")]["SESIONES"].sum())
+                desk = int(df_ga4[~disp_clean.str.contains("MOB")]["SESIONES"].sum())
+            else:
+                mob = 0
+                desk = 0
 
-            # --- Inversión de marketing (real, filtrada por fecha y marca) ---
-            gasto_cat_cy = _gasto_marketing_por_categoria(con, fecha_inicio, fecha_fin, marca)
-            gasto_cat_yoy = _gasto_marketing_por_categoria(con, yoy_inicio, yoy_fin, marca)
+            # --- Inversión de marketing ---
+            gasto_cat_cy = _gasto_marketing_por_categoria(con, fecha_inicio, fecha_fin, marca, lista_categorias)
+            gasto_cat_yoy = _gasto_marketing_por_categoria(con, yoy_inicio, yoy_fin, marca, lista_categorias)
             total_mkt = gasto_cat_cy["_total"]
             total_mkt_yoy = gasto_cat_yoy["_total"]
 
-            # --- Venta D2C real (filtrada por fecha y marca) ---
-            d2c_cy = _ventas_d2c_periodo(con, fecha_inicio, fecha_fin, marca)
-            d2c_yoy = _ventas_d2c_periodo(con, yoy_inicio, yoy_fin, marca)
+            # --- Tendencia Semanal Anual (2026 vs 2025 YoY) ---
+            weekly_data = _calcular_tendencia_semanal_d2c(df_ga4_full, con, marca, lista_categorias)
+
+            # --- Venta D2C real ---
+            d2c_cy = _ventas_d2c_periodo(con, fecha_inicio, fecha_fin, marca, lista_categorias, lista_vendedores, lista_bodegas)
+            d2c_yoy = _ventas_d2c_periodo(con, yoy_inicio, yoy_fin, marca, lista_categorias, lista_vendedores, lista_bodegas)
             vta_d2c = d2c_cy["venta_total"]
             vta_d2c_yoy = d2c_yoy["venta_total"]
 
@@ -392,12 +476,7 @@ def get_d2c_performance(
         tacos_yoy = (total_mkt_yoy / vta_d2c_yoy * 100) if vta_d2c_yoy > 0 else 0.0
         conversion = (txs / total_sesiones * 100) if total_sesiones > 0 else 0.0
 
-        # --- Performance por categoría: venta real + inversión real repartida ---
-        # Se recorre la UNIÓN de categorías presentes en ventas Y en
-        # campañas de marketing -- si no, una categoría con inversión
-        # real pero sin venta categorizada todavía (típico mientras el
-        # catálogo de Bsale no está 100% categorizado) desaparecía sin
-        # dejar rastro (06-ago-2026, encontrado con William en Tom Palmer).
+        # --- Performance por categoría ---
         categorias_ventas = set(d2c_cy["por_categoria"].keys())
         categorias_marketing = {k for k in gasto_cat_cy.keys() if k != "_total"}
         categorias_marketing |= {k for k in gasto_cat_yoy.keys() if k != "_total"}
@@ -440,6 +519,7 @@ def get_d2c_performance(
             "addToCart": atc,
             "checkouts": checkouts,
             "transactions": txs,
+            "weeklyData": weekly_data,
             "categoryPerf": cat_perf
         }
     except Exception as e:

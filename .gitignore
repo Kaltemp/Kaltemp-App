@@ -1,11 +1,59 @@
+# ============================================================
+# .gitignore BLINDADO PARA Kaltemp Matrix
+# Guardar en la RAÍZ del repositorio:
+# C:\Users\willi\OneDrive\Datos adjuntos\Documents\GitHub\Kaltemp-App\.gitignore
+# ============================================================
+
+# --- Credenciales, secretos y tokens (CRÍTICO) ---
 .env
-.env.local
-*.env
-!.env.example
-venv/
-**/venv/
-__pycache__/
-**/__pycache__/
-*.pyc
+.env*
+*.env*
+*.local
+**/.env*
+google_credentials*.json
+service_account*.json
+*.pem
+*.key
+
+# --- Bases de datos reales y temporales ---
 *.duckdb
+*.duckdb.*
+*.db
+*.sqlite3
+*.wal
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# --- Node / Vite / React ---
 node_modules/
+dist/
+dist-ssr/
+build/
+.vite/
+
+# --- Backups locales y archivos duplicados de Windows ---
+*_py.bak
+*_tsx.bak
+*.bak
+*.backup
+* - copia*.*
+* - copia (2)*.*
+* - copia (3)*.*
+
+# --- Editor / SO ---
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+npm-debug.log*

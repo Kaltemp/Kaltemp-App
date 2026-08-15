@@ -1,3 +1,4 @@
+# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\sync\sync_ga4_tompalmer.py
 """
 sync/sync_ga4_tompalmer.py — Trae Sesiones/Rebote/ATC/Checkouts/
 Transacciones desde la propiedad de GA4 de Tom Palmer (tompalmer.cl),
@@ -39,7 +40,14 @@ CREDS_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", os.path.abspath(os.path
 PROPERTY_ID = sys.argv[1] if len(sys.argv) > 1 else os.getenv("GA4_PROPERTY_ID_TP")
 
 
-def sync_ga4_tompalmer():
+def sync_ga4_tompalmer(progress_callback=None, dias_atras: int = None):
+    """
+    dias_atras (agregado 11-ago-2026, mismo motivo que en
+    sync_notas_credito.py): si se pasa, la ventana se calcula como hoy
+    menos esos días, en vez del "2024-01-01" fijo de siempre.
+    progress_callback se acepta solo para no romper si sync_admin.py lo
+    pasa (este script no reportaba progreso incremental).
+    """
     print(f"[{datetime.now()}] 📊 Sincronizando GA4 Tom Palmer hacia {DB_FILE}")
 
     if not PROPERTY_ID:
@@ -63,6 +71,11 @@ def sync_ga4_tompalmer():
 
     client = BetaAnalyticsDataClient(credentials=credentials)
 
+    fecha_desde = "2024-01-01"
+    if dias_atras is not None:
+        from datetime import timedelta
+        fecha_desde = (datetime.now() - timedelta(days=dias_atras)).strftime("%Y-%m-%d")
+
     request = RunReportRequest(
         property=f"properties/{PROPERTY_ID}",
         dimensions=[Dimension(name="date"), Dimension(name="deviceCategory")],
@@ -73,7 +86,7 @@ def sync_ga4_tompalmer():
             Metric(name="checkouts"),
             Metric(name="transactions"),
         ],
-        date_ranges=[DateRange(start_date="2024-01-01", end_date="today")],
+        date_ranges=[DateRange(start_date=fecha_desde, end_date="today")],
     )
 
     try:
@@ -108,10 +121,26 @@ def sync_ga4_tompalmer():
     df["FECHA"] = pd.to_datetime(df["FECHA"])
 
     with duckdb.connect(DB_FILE) as con:
-        con.execute("DROP TABLE IF EXISTS ga4_metricas_tompalmer")
+        # FIX (15-ago-2026): mismo problema y misma solución que
+        # sync_ga4_kaltemp.py -- ver ese archivo para el detalle completo.
+        # Antes DROP+CREATE borraba todo el histórico en cada corrida con
+        # dias_atras chico; ahora solo se reemplaza la ventana consultada.
+        tablas = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
+        if "ga4_metricas_tompalmer" not in tablas:
+            con.execute("""
+                CREATE TABLE ga4_metricas_tompalmer (
+                    FECHA TIMESTAMP, DISPOSITIVO VARCHAR, SESIONES BIGINT,
+                    TASA_REBOTE DOUBLE, ADD_TO_CART BIGINT, CHECKOUTS BIGINT,
+                    TRANSACCIONES BIGINT
+                )
+            """)
+        con.execute(
+            "DELETE FROM ga4_metricas_tompalmer WHERE CAST(FECHA AS DATE) >= CAST(? AS DATE)",
+            [fecha_desde],
+        )
         con.register("df_ga4_tp_tmp", df)
-        con.execute("CREATE TABLE ga4_metricas_tompalmer AS SELECT * FROM df_ga4_tp_tmp")
-        print(f"[{datetime.now()}] ✅ ga4_metricas_tompalmer actualizada con {len(df)} filas.")
+        con.execute("INSERT INTO ga4_metricas_tompalmer SELECT * FROM df_ga4_tp_tmp")
+        print(f"[{datetime.now()}] ✅ ga4_metricas_tompalmer actualizada con {len(df)} filas (ventana desde {fecha_desde}).")
 
 
 if __name__ == "__main__":

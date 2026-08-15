@@ -1,4 +1,6 @@
 """
+GUARDAR EN: C:\\kaltemp_app\\kaltemp-backend-fastapi-v2\\backend\\sync\\sync_marketing.py
+
 sync/sync_marketing.py — Sincroniza dos fuentes REALES hacia DuckDB:
 
   - Historico_Test_Meta      -> llenada por nuestro Apps Script (API de
@@ -227,6 +229,15 @@ def enriquecer_google_con_imagen_y_marca(df_google: pd.DataFrame, df_meta: pd.Da
 def sync_marketing():
     print(f"[{datetime.now()}] 📢 Sincronizando datos diarios hacia {DB_FILE}")
 
+    # 12-ago-2026: nueva hoja "Historico_Test_Meta_Anuncios" -- detalle
+    # a nivel de ANUNCIO INDIVIDUAL (no campaña), con imagen matcheada
+    # por ad_id exacto (ver AnunciosMetaV2.gs). Se sincroniza igual que
+    # las demás pestañas, sin tocar el resto de esta función. Si la
+    # pestaña todavía no existe o está vacía (ej. antes de correr la
+    # prueba en Apps Script), df_meta_anuncios queda vacío y sync sigue
+    # normal, sin romper nada.
+    df_meta_anuncios = descargar_csv_google_sheet(GOOGLE_SHEET_MKT_ID, ["Historico_Test_Meta_Anuncios"])
+
     df_meta = descargar_csv_google_sheet(GOOGLE_SHEET_MKT_ID, ["Historico_Test_Meta"])
     df_google_kaltemp = descargar_csv_google_sheet(GOOGLE_SHEET_MKT_ID, ["Historico_Diario_Google"])
     df_google_tp = descargar_csv_google_sheet(GOOGLE_SHEET_MKT_ID, ["Historico_Diario_Google_TomPalmer"])
@@ -250,6 +261,14 @@ def sync_marketing():
         if (not df_google_kaltemp.empty or not df_google_tp.empty) else pd.DataFrame()
 
     with duckdb.connect(DB_FILE) as con:
+        if not df_meta_anuncios.empty:
+            con.execute("DROP TABLE IF EXISTS mkt_inversion_meta_anuncios")
+            con.register("df_meta_anuncios_tmp", df_meta_anuncios)
+            con.execute("CREATE TABLE mkt_inversion_meta_anuncios AS SELECT * FROM df_meta_anuncios_tmp")
+            print(f"[{datetime.now()}] ✅ mkt_inversion_meta_anuncios actualizada con {len(df_meta_anuncios)} filas.")
+        else:
+            print(f"[{datetime.now()}] ℹ️ 'Historico_Test_Meta_Anuncios' vacía o no encontrada -- se omite mkt_inversion_meta_anuncios (no rompe el resto del sync).")
+
         if not df_meta.empty:
             con.execute("DROP TABLE IF EXISTS mkt_inversion_meta")
             con.register("df_meta_tmp", df_meta)

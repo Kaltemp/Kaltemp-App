@@ -1,30 +1,52 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { CreditNoteItem, ThemeMode } from '../types';
+// GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\components\CreditNotesView.tsx
+// (o la carpeta donde ya vive hoy tu CreditNotesView.tsx -- solo reemplaza ese archivo)
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { CreditNoteItem, ThemeMode, BrandMode} from '../types';
+import { getBrandTokens } from '../theme/brandTokens';
 import { FileSpreadsheet, AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react';
 import { fetchNotasCredito } from '../services/api';
+import { useGlobalFilter } from '../context/FilterContext';
 import { CrossFilterBanner } from '../components/CrossFilterBanner';
 import { SortableTh } from '../components/SortableTh';
 
 interface Props {
   theme: ThemeMode;
+  brandMode: BrandMode;
 }
 
-export const CreditNotesView: React.FC<Props> = ({ theme }) => {
+export const CreditNotesView: React.FC<Props> = ({ theme, brandMode }) => {
   const isDark = theme === 'dark';
-  
+  const brandTokens = getBrandTokens(brandMode, isDark);
+
+  // Filtro de fechas GLOBAL (sidebar) -- antes este módulo lo ignoraba
+  // por completo y siempre traía el histórico entero sin filtrar.
+  const { startDate, endDate } = useGlobalFilter();
+
   // Filtro cruzado LOCAL a este módulo (clic en tarjeta con desfase)
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
 
   const collator = useMemo(() => new Intl.Collator('es', { numeric: true, sensitivity: 'base' }), []);
+
+  // Formatea un ISO string (con o sin hora) a DD/MM/AAAA -- las fechas
+  // vienen del backend como .isoformat() (ej. "2026-07-06T21:00:32"),
+  // que mostraba también la hora. Acá solo se cambia la presentación en
+  // esta tabla; el ISO original se sigue usando para ordenar.
+  const formatFecha = (iso: string | null | undefined): string => {
+    if (!iso) return '—';
+    const soloFecha = iso.split('T')[0]; // "2026-07-06"
+    const [anio, mes, dia] = soloFecha.split('-');
+    if (!anio || !mes || !dia) return iso;
+    return `${dia}/${mes}/${anio}`;
+  };
 
   const [CREDIT_NOTES_DATA, setCreditNotesData] = useState<CreditNoteItem[]>([]);
   const [disponible, setDisponible] = useState(true);
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const cargarNotasCredito = useCallback(() => {
     setLoading(true);
-    fetchNotasCredito()
+    fetchNotasCredito(startDate, endDate)
       .then((res) => {
         setDisponible(res.disponible);
         setMensaje(res.mensaje);
@@ -35,7 +57,14 @@ export const CreditNotesView: React.FC<Props> = ({ theme }) => {
         setMensaje(err.message);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [startDate, endDate]);
+
+  // Se re-ejecuta automáticamente cada vez que cambia el rango de fechas
+  // del sidebar -- ya no hace falta un botón "Actualizar" separado para
+  // que la vista refleje el filtro.
+  useEffect(() => {
+    cargarNotasCredito();
+  }, [cargarNotasCredito]);
 
   // Sorting state
   const [sortKey, setSortKey] = useState<string>('diasDesfase');
@@ -114,9 +143,19 @@ export const CreditNotesView: React.FC<Props> = ({ theme }) => {
 
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className={`text-2xl font-black tracking-tight flex items-center gap-2.5 ${titleBlue}`}>
-          <FileSpreadsheet className="w-7 h-7 text-blue-600 dark:text-blue-400" /> Notas de Crédito
+        <h1 className="text-2xl font-black tracking-tight flex items-center gap-2.5" style={{ color: brandTokens.accent }}>
+          <FileSpreadsheet className="w-7 h-7" style={{ color: brandTokens.accent }} /> Notas de Crédito
         </h1>
+        <button
+          onClick={cargarNotasCredito}
+          disabled={loading}
+          title="Volver a pedir los datos al servidor"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            isDark ? 'bg-white/5 hover:bg-white/10 text-[#EDEDED]' : 'bg-black/5 hover:bg-black/10 text-slate-700'
+          } disabled:opacity-50`}
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Actualizar
+        </button>
       </div>
 
       {/* KPI Cards Estilo Apple HIG */}
@@ -248,9 +287,9 @@ export const CreditNotesView: React.FC<Props> = ({ theme }) => {
                     <td className="p-2.5 font-semibold">{item.cliente}</td>
                     <td className={`p-2.5 font-extrabold ${titleAmber}`}>{item.vendedor || 'Sin vendedor'}</td>
                     <td className="p-2.5 text-center font-medium">
-                      {item.fechaGeneracion ? item.fechaGeneracion : <span className="opacity-40 italic">—</span>}
+                      {item.fechaGeneracion ? formatFecha(item.fechaGeneracion) : <span className="opacity-40 italic">—</span>}
                     </td>
-                    <td className="p-2.5 text-center font-medium">{item.fechaEmision}</td>
+                    <td className="p-2.5 text-center font-medium">{formatFecha(item.fechaEmision)}</td>
                     <td className={`p-2.5 text-center font-black ${item.alerta ? titleRed : titleAmber}`}>{item.diasDesfase}d</td>
                     <td className={`p-2.5 text-right font-black ${titleEmerald}`}>${(item.monto || 0).toLocaleString('es-CL')}</td>
                   </tr>

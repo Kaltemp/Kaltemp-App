@@ -1,6 +1,18 @@
+// ============================================================
+// ARCHIVO: types.ts
+// GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\src\types.ts
+// (Respaldar el archivo actual antes de reemplazar: Copy-Item types.ts types.ts.bak)
+// ============================================================
+
 export type ThemeMode = 'dark' | 'light';
 
+// Re-exportado desde theme/brandTokens.ts para que cualquier archivo
+// pueda importar el tipo BrandMode junto a ThemeMode/ModuleId sin
+// depender de la ruta del módulo de tokens.
+export type { BrandMode } from './theme/brandTokens';
+
 export type ModuleId =
+  | 'resumen'
   | 'principal'
   | 'ventas_sku'
   | 'stock'

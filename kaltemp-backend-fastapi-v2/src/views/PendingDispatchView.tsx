@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { PendingDispatchItem, PendingDispatchDocItem, ThemeMode } from '../types';
+import { PendingDispatchItem, PendingDispatchDocItem, ThemeMode, BrandMode} from '../types';
+import { getBrandTokens } from '../theme/brandTokens';
 import { ClipboardList, AlertCircle, PackageSearch, User } from 'lucide-react';
 import { useGlobalFilter } from '../context/FilterContext';
 import { fetchPendientesDespacho, fetchPendientesDespachoDocumentos } from '../services/api';
@@ -8,10 +9,12 @@ import { SortableTh } from '../components/SortableTh';
 
 interface Props {
   theme: ThemeMode;
+  brandMode: BrandMode;
 }
 
-export const PendingDispatchView: React.FC<Props> = ({ theme }) => {
+export const PendingDispatchView: React.FC<Props> = ({ theme, brandMode }) => {
   const isDark = theme === 'dark';
+  const brandTokens = getBrandTokens(brandMode, isDark);
   // Filtros globales del sidebar
   const { matchesCategory, matchesWarehouse, matchesRep } = useGlobalFilter();
 

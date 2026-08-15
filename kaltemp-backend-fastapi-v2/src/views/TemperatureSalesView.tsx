@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { DailyTempSale } from '../types';
-import { ThemeMode } from '../types';
+import { DailyTempSale, ThemeMode, BrandMode} from '../types';
+import { getBrandTokens } from '../theme/brandTokens';
 import { Thermometer, Flame, Trophy } from 'lucide-react';
 import { useGlobalFilter } from '../context/FilterContext';
 import { fetchVentasTemperatura } from '../services/api';
@@ -10,20 +10,29 @@ import {
   Bar,
   Line,
   XAxis,
+  YAxis,
   Tooltip,
+  Legend,
   ResponsiveContainer,
   LabelList
 } from 'recharts';
 
-interface Props {
-  theme: ThemeMode;
+interface ExtendedDailyTempSale extends DailyTempSale {
+  tempMaxYoY?: number;
+  tempMinYoY?: number;
 }
 
-export const TemperatureSalesView: React.FC<Props> = ({ theme }) => {
+interface Props {
+  theme: ThemeMode;
+  brandMode: BrandMode;
+}
+
+export const TemperatureSalesView: React.FC<Props> = ({ theme, brandMode }) => {
   const isDark = theme === 'dark';
+  const brandTokens = getBrandTokens(brandMode, isDark);
   const { startDate, endDate } = useGlobalFilter();
 
-  const [DAILY_TEMP_SALES, setDailyTempSales] = useState<DailyTempSale[]>([]);
+  const [DAILY_TEMP_SALES, setDailyTempSales] = useState<ExtendedDailyTempSale[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,17 +47,22 @@ export const TemperatureSalesView: React.FC<Props> = ({ theme }) => {
       .finally(() => setLoading(false));
   }, [startDate, endDate]);
 
-  // No hay comparativo real de temperatura año contra año todavía (requeriría
-  // guardar el histórico de Open-Meteo, no solo el rango consultado) -- se
-  // muestra únicamente la temperatura real del período, sin línea inventada.
-  const chartDataWithYoY = useMemo(() => DAILY_TEMP_SALES, [DAILY_TEMP_SALES]);
-
   const totalVenta = DAILY_TEMP_SALES.reduce((acc, d) => acc + d.brutoTotal, 0);
+
   const tempMaxAvg = DAILY_TEMP_SALES.length
     ? DAILY_TEMP_SALES.reduce((acc, d) => acc + d.tempMax, 0) / DAILY_TEMP_SALES.length
     : 0;
+
+  const tempMaxAvgYoY = DAILY_TEMP_SALES.length
+    ? DAILY_TEMP_SALES.reduce((acc, d) => acc + (d.tempMaxYoY ?? 0), 0) / DAILY_TEMP_SALES.length
+    : 0;
+
   const tempMinAvg = DAILY_TEMP_SALES.length
     ? DAILY_TEMP_SALES.reduce((acc, d) => acc + d.tempMin, 0) / DAILY_TEMP_SALES.length
+    : 0;
+
+  const tempMinAvgYoY = DAILY_TEMP_SALES.length
+    ? DAILY_TEMP_SALES.reduce((acc, d) => acc + (d.tempMinYoY ?? 0), 0) / DAILY_TEMP_SALES.length
     : 0;
 
   const maxDay = DAILY_TEMP_SALES.length
@@ -70,14 +84,14 @@ export const TemperatureSalesView: React.FC<Props> = ({ theme }) => {
         <div className={`p-4 rounded-xl border shadow-md ${
           isDark ? 'bg-[#1F1F23] border-[#333339]' : 'bg-white border-slate-200'
         }`}>
-          <span className="text-[11px] font-bold uppercase tracking-wider text-blue-500">
+          <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: brandTokens.accent }}>
             VENTA TOTAL PERIODO
           </span>
-          <div className="text-2xl sm:text-3xl font-extrabold text-blue-500 mt-1">
+          <div className="text-2xl sm:text-3xl font-extrabold mt-1" style={{ color: brandTokens.accent }}>
             ${(totalVenta / 1000000).toFixed(2)} M CLP
           </div>
           <span className="text-[11px] block mt-1 opacity-70">
-            Últimos 14 días Santiago
+            Venta acumulada del período
           </span>
         </div>
 
@@ -91,7 +105,7 @@ export const TemperatureSalesView: React.FC<Props> = ({ theme }) => {
             {tempMaxAvg.toFixed(1)} °C
           </div>
           <span className="text-[11px] block mt-1 opacity-70">
-            YoY Promedio: {(tempMaxAvg + 0.8).toFixed(1)} °C
+            YoY Promedio: {tempMaxAvgYoY.toFixed(1)} °C
           </span>
         </div>
 
@@ -105,7 +119,7 @@ export const TemperatureSalesView: React.FC<Props> = ({ theme }) => {
             {tempMinAvg.toFixed(1)} °C
           </div>
           <span className="text-[11px] block mt-1 opacity-70">
-            YoY Promedio: {(tempMinAvg - 0.4).toFixed(1)} °C
+            YoY Promedio: {tempMinAvgYoY.toFixed(1)} °C
           </span>
         </div>
 
@@ -136,38 +150,117 @@ export const TemperatureSalesView: React.FC<Props> = ({ theme }) => {
           </h3>
         </div>
 
-        <div className="h-80 w-full">
+        <div className="h-[480px] w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartDataWithYoY}>
-              <XAxis dataKey="fechaDisp" stroke={isDark ? '#B8B8BE' : '#64748b'} fontSize={11} />
+            <ComposedChart data={DAILY_TEMP_SALES} margin={{ top: 25, right: 15, left: 15, bottom: 10 }}>
+              <XAxis dataKey="fechaDisp" stroke={isDark ? '#B8B8BE' : '#64748b'} fontSize={12} fontWeight="bold" />
+
+              {/* Eje Y1 Oculto para Ventas ($ Millions) */}
+              <YAxis yAxisId="left" hide={true} />
+
+              {/* Eje Y2 Oculto para Temperaturas (°C) */}
+              <YAxis
+                yAxisId="right"
+                hide={true}
+                domain={[(dataMin: number) => Math.floor(dataMin - 3), (dataMax: number) => Math.ceil(dataMax + 5)]}
+              />
+
               <Tooltip
                 formatter={(value: any, name: any) => {
                   if (name === 'Venta ($M)') return [`$${(Number(value) / 1000000).toFixed(1)} M`, name];
-                  return [`${Number(value).toFixed(1)}°C`, name];
+                  return [`${Number(value).toFixed(1)} °C`, name];
                 }}
                 contentStyle={{
                   backgroundColor: isDark ? '#1F1F23' : '#ffffff',
                   borderColor: isDark ? '#333339' : '#e2e8f0',
                   color: isDark ? '#EDEDED' : '#1e293b',
-                  borderRadius: '8px'
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
                 }}
               />
-              <Bar dataKey="brutoTotal" name="Venta ($M)" fill="#0A84FF" radius={[4, 4, 0, 0]}>
-                <LabelList dataKey="brutoTotal" position="top" formatter={(val: number) => `$${(val / 1000000).toFixed(1)}M`} fill={isDark ? '#EDEDED' : '#1e293b'} fontSize={10} fontWeight="bold" />
+
+              <Legend
+                verticalAlign="top"
+                height={36}
+                wrapperStyle={{ fontSize: '12px', fontWeight: 'bold', paddingBottom: '10px' }}
+              />
+
+              {/* Barras de Ventas */}
+              <Bar yAxisId="left" dataKey="brutoTotal" name="Venta ($M)" fill="#0A84FF" radius={[4, 4, 0, 0]}>
+                <LabelList
+                  dataKey="brutoTotal"
+                  position="top"
+                  offset={10}
+                  formatter={(val: number) => `$${(val / 1000000).toFixed(1)}M`}
+                  fill={isDark ? '#EDEDED' : '#0F172A'}
+                  fontSize={12}
+                  fontWeight="bold"
+                />
               </Bar>
 
-              {/* Temperatures Actual */}
-              <Line type="monotone" dataKey="tempMax" name="Temp. Máx Actual (°C)" stroke="#FF9F0A" strokeWidth={2.5} dot={{ r: 4 }}>
-                <LabelList dataKey="tempMax" position="top" formatter={(val: number) => `${val}°C`} fill="#FF9F0A" fontSize={9} fontWeight="bold" />
-              </Line>
-              <Line type="monotone" dataKey="tempMin" name="Temp. Mín Actual (°C)" stroke="#5AC8FA" strokeWidth={2} dot={{ r: 3 }}>
-                <LabelList dataKey="tempMin" position="bottom" formatter={(val: number) => `${val}°C`} fill="#5AC8FA" fontSize={9} fontWeight="bold" />
+              {/* Temperaturas Actuales (Líneas Sólidas con etiquetas más grandes) */}
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="tempMax"
+                name="Temp. Máx Actual (°C)"
+                stroke="#FF9F0A"
+                strokeWidth={2.8}
+                dot={{ r: 4.5 }}
+              >
+                <LabelList
+                  dataKey="tempMax"
+                  position="top"
+                  offset={10}
+                  formatter={(val: number) => `${val}°C`}
+                  fill="#D97706"
+                  fontSize={11}
+                  fontWeight="bold"
+                />
               </Line>
 
-              {/* Temperatures YoY */}
-              {/* Línea YoY de temperatura removida: no hay histórico real
-                  guardado todavía para comparar año contra año (se puede
-                  agregar guardando el resultado de Open-Meteo por fecha) */}
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="tempMin"
+                name="Temp. Mín Actual (°C)"
+                stroke="#5AC8FA"
+                strokeWidth={2.2}
+                dot={{ r: 4 }}
+              >
+                <LabelList
+                  dataKey="tempMin"
+                  position="bottom"
+                  offset={10}
+                  formatter={(val: number) => `${val}°C`}
+                  fill="#0284C7"
+                  fontSize={11}
+                  fontWeight="bold"
+                />
+              </Line>
+
+              {/* Temperaturas YoY Año Anterior (Líneas Punteadas) */}
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="tempMaxYoY"
+                name="Temp. Máx YoY (°C)"
+                stroke="#D97706"
+                strokeWidth={2}
+                strokeDasharray="4 4"
+                dot={{ r: 3 }}
+              />
+
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="tempMinYoY"
+                name="Temp. Mín YoY (°C)"
+                stroke="#0284C7"
+                strokeWidth={1.8}
+                strokeDasharray="4 4"
+                dot={{ r: 3 }}
+              />
             </ComposedChart>
           </ResponsiveContainer>
         </div>

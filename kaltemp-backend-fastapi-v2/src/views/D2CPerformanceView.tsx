@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeMode } from '../types';
+import { getBrandTokens } from '../theme/brandTokens';
 import { TrendingUp, DollarSign, Smartphone, ShoppingBag, Eye, Zap, ArrowUpRight, CheckCircle2, RefreshCw } from 'lucide-react';
 import { useGlobalFilter, ALL_CATEGORIES, ALL_CHANNELS, ALL_REPS, ALL_WAREHOUSES } from '../context/FilterContext';
 import { CrossFilterBanner } from '../components/CrossFilterBanner';
@@ -12,29 +13,100 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  ResponsiveContainer
+  ResponsiveContainer,
+  CartesianGrid
 } from 'recharts';
 
-// Logos reales por marca (mismos que usa sync_marketing.py como respaldo
-// de imagen para campañas de Google sin creative propio) -- 07-ago-2026.
 const BRANDS: { id: 'Kaltemp' | 'Tom Palmer'; label: string; logo: string; color: string }[] = [
   {
     id: 'Kaltemp',
     label: 'Kaltemp',
     logo: 'https://kaltemp.cl/cdn/shop/files/Logo_Horizontal-01_PNG.png?height=96&v=1659535251',
-    color: '#CC0000',
+    color: '#CC0000', // rojo real del manual de marca Kaltemp
   },
   {
     id: 'Tom Palmer',
     label: 'Tom Palmer',
     logo: 'https://www.tompalmer.cl/cdn/shop/files/Diseno_sin_titulo_3.png?v=1767198984&width=500',
-    color: '#B45309',
+    color: '#FF8F7D', // FIX (15-ago-2026): antes #B45309 (ámbar inventado) -- coral real del manual de marca Tom Palmer
   },
 ];
 
 interface Props {
   theme: ThemeMode;
 }
+
+// Tooltip Personalizado de Alta Precisión
+const CustomD2CTooltip = ({ active, payload, label, isDark }: any) => {
+  if (!active || !payload || !payload.length) return null;
+
+  const data = payload[0]?.payload || {};
+  const spend2026 = Number(data.spend ?? 0);
+  const spend2025 = Number(data.spendYoy ?? 0);
+  const sessions2026 = Number(data.sessions ?? 0);
+  const sessions2025 = Number(data.sessionsYoy ?? 0);
+
+  const varSpendPct = spend2025 > 0 ? ((spend2026 - spend2025) / spend2025) * 100 : (spend2026 > 0 ? 100 : 0);
+  const varSessionsPct = sessions2025 > 0 ? ((sessions2026 - sessions2025) / sessions2025) * 100 : (sessions2026 > 0 ? 100 : 0);
+
+  const formatMoney = (val: number) => {
+    if (val >= 1_000_000) return `$${(val / 1_000_000).toFixed(2)} M`;
+    if (val >= 1_000) return `$${(val / 1_000).toFixed(1)} K`;
+    return `$${val.toLocaleString('es-CL')}`;
+  };
+
+  const formatCount = (val: number) => {
+    if (val >= 1_000) return `${(val / 1_000).toFixed(2)} K`;
+    return `${val.toLocaleString('es-CL')}`;
+  };
+
+  return (
+    <div className={`p-3.5 rounded-2xl shadow-xl border text-xs space-y-2.5 min-w-[220px] ${
+      isDark ? 'bg-[#1F1F23] border-[#333339] text-[#EDEDED]' : 'bg-white border-slate-200 text-slate-800'
+    }`}>
+      <div className="font-black border-b pb-1.5 border-slate-200 dark:border-[#333339] flex justify-between items-center">
+        <span className="text-sm">{label}</span>
+        <span className="text-[10px] font-bold opacity-60 uppercase tracking-wider">Comparativo YoY</span>
+      </div>
+
+      {/* Bloque Inversión */}
+      <div className="space-y-1">
+        <div className="text-[10px] uppercase font-black tracking-wider text-amber-500 flex justify-between items-center">
+          <span>INVERSIÓN MKT</span>
+          <span className={`font-extrabold ${varSpendPct >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+            {varSpendPct >= 0 ? '+' : ''}{varSpendPct.toFixed(1)}% YoY
+          </span>
+        </div>
+        <div className="flex justify-between font-medium">
+          <span className="text-[#BF5AF2]">Inversión 2025 ($):</span>
+          <span className="font-bold">{formatMoney(spend2025)}</span>
+        </div>
+        <div className="flex justify-between font-bold">
+          <span className="text-[#FF9F0A]">Inversión 2026 ($):</span>
+          <span className="font-black text-amber-500">{formatMoney(spend2026)}</span>
+        </div>
+      </div>
+
+      {/* Bloque Sesiones */}
+      <div className="space-y-1 pt-1.5 border-t border-slate-100 dark:border-[#2C2C2E]">
+        <div className="text-[10px] uppercase font-black tracking-wider text-blue-500 flex justify-between items-center">
+          <span>SESIONES GA4</span>
+          <span className={`font-extrabold ${varSessionsPct >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+            {varSessionsPct >= 0 ? '+' : ''}{varSessionsPct.toFixed(1)}% YoY
+          </span>
+        </div>
+        <div className="flex justify-between font-medium">
+          <span className={isDark ? "text-slate-400" : "text-slate-500"}>Sesiones 2025:</span>
+          <span className="font-bold">{formatCount(sessions2025)}</span>
+        </div>
+        <div className="flex justify-between font-bold">
+          <span className="text-[#0A84FF]">Sesiones 2026:</span>
+          <span className="font-black text-blue-500">{formatCount(sessions2026)}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
   const isDark = theme === 'dark';
@@ -52,8 +124,19 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
   const [selectedMarca, setSelectedMarca] = useState<'Kaltemp' | 'Tom Palmer'>('Kaltemp');
   const [ga4Disponible, setGa4Disponible] = useState(true);
 
+  // EXCEPCIÓN (ver theme/brandTokens.ts): D2C nunca recibe el selector
+  // global de modo de marca -- siempre resuelve su propio modo a partir
+  // de selectedMarca, porque este módulo nunca muestra "ambas marcas a
+  // la vez" (no existe un estado "Todas" acá).
+  const brandTokens = getBrandTokens(selectedMarca === 'Kaltemp' ? 'kaltemp' : 'tompalmer', isDark);
+
   const [sortKey, setSortKey] = useState<string>('venta');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const handleMarcaChange = (nuevaMarca: 'Kaltemp' | 'Tom Palmer') => {
+    setSelectedCategory(null);
+    setSelectedMarca(nuevaMarca);
+  };
 
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -76,7 +159,7 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
   const [d2cSalesYoy, setD2cSalesYoy] = useState(0);
   const [tacosYoy, setTacosYoy] = useState(0);
 
-  const [weeklyData, setWeeklyData] = useState<{ week: string; sessions: number; spend: number }[]>([]);
+  const [weeklyData, setWeeklyData] = useState<{ week: string; sessions: number; sessionsYoy: number; spend: number; spendYoy: number }[]>([]);
   const [categoryPerf, setCategoryPerf] = useState<any[]>([]);
   
   const [mobileSessions, setMobileSessions] = useState(0);
@@ -146,23 +229,83 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
 
   const filteredCategories = useMemo(() => {
     let list = Array.isArray(categoryPerf) ? categoryPerf : [];
+
+    if (selectedCategories && selectedCategories.length > 0 && selectedCategories.length < ALL_CATEGORIES.length) {
+      list = list.filter((c) => {
+        const catName = (c.categoria || c.name || "").toLowerCase();
+        if (catName === 'despachos y servicios' || catName === 'sin categoría' || catName === 'sin categoria') {
+          return true;
+        }
+        return selectedCategories.some(sc => sc.toLowerCase() === catName);
+      });
+    }
+
     if (selectedCategory) {
       list = list.filter((c) => (c.categoria || c.name || "").toLowerCase().includes(selectedCategory.toLowerCase()));
     }
 
     return [...list].sort((a: any, b: any) => {
-      let aVal = a[sortKey];
-      let bVal = b[sortKey];
-      if (aVal === undefined || aVal === null) aVal = '';
-      if (bVal === undefined || bVal === null) bVal = '';
-      if (typeof aVal === 'string') aVal = aVal.toLowerCase();
-      if (typeof bVal === 'string') bVal = bVal.toLowerCase();
+      let aVal: any;
+      let bVal: any;
+
+      if (sortKey === 'varInversion') {
+        const aInv = Number(a.inversion ?? 0);
+        const aInvYoy = Number(a.inversionYoy ?? 0);
+        aVal = aInvYoy > 0 ? ((aInv - aInvYoy) / aInvYoy) * 100 : (aInv > 0 ? 100 : 0);
+
+        const bInv = Number(b.inversion ?? 0);
+        const bInvYoy = Number(b.inversionYoy ?? 0);
+        bVal = bInvYoy > 0 ? ((bInv - bInvYoy) / bInvYoy) * 100 : (bInv > 0 ? 100 : 0);
+      } else if (sortKey === 'varVenta') {
+        const aVta = Number(a.venta ?? 0);
+        const aVtaYoy = Number(a.ventaYoy ?? 0);
+        aVal = aVtaYoy > 0 ? ((aVta - aVtaYoy) / aVtaYoy) * 100 : (aVta > 0 ? 100 : 0);
+
+        const bVta = Number(b.venta ?? 0);
+        const bVtaYoy = Number(b.ventaYoy ?? 0);
+        bVal = bVtaYoy > 0 ? ((bVta - bVtaYoy) / bVtaYoy) * 100 : (bVta > 0 ? 100 : 0);
+      } else {
+        aVal = a[sortKey];
+        bVal = b[sortKey];
+        if (aVal === undefined || aVal === null) aVal = '';
+        if (bVal === undefined || bVal === null) bVal = '';
+        if (typeof aVal === 'string') aVal = aVal.toLowerCase();
+        if (typeof bVal === 'string') bVal = bVal.toLowerCase();
+      }
 
       if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
       if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [selectedCategory, sortKey, sortDir, categoryPerf]);
+  }, [selectedCategory, JSON.stringify(selectedCategories), sortKey, sortDir, categoryPerf]);
+
+  const categoryTotals = useMemo(() => {
+    let sumInv = 0;
+    let sumInvYoy = 0;
+    let sumVta = 0;
+    let sumVtaYoy = 0;
+
+    filteredCategories.forEach((c: any) => {
+      sumInv += Number(c.inversion ?? 0);
+      sumInvYoy += Number(c.inversionYoy ?? 0);
+      sumVta += Number(c.venta ?? 0);
+      sumVtaYoy += Number(c.ventaYoy ?? 0);
+    });
+
+    const invVarPct = sumInvYoy > 0 ? ((sumInv - sumInvYoy) / sumInvYoy) * 100 : (sumInv > 0 ? 100 : 0);
+    const vtaVarPct = sumVtaYoy > 0 ? ((sumVta - sumVtaYoy) / sumVtaYoy) * 100 : (sumVta > 0 ? 100 : 0);
+    const tacosPct = sumVta > 0 ? ((sumInv / sumVta) * 100) : 0;
+
+    return {
+      inv: sumInv,
+      invYoy: sumInvYoy,
+      invVarPct,
+      vta: sumVta,
+      vtaYoy: sumVtaYoy,
+      vtaVarPct,
+      tacosPct
+    };
+  }, [filteredCategories]);
 
   const sessionsVarPct = sessionsYoy ? ((totalSessions - sessionsYoy) / sessionsYoy) * 100 : 0;
   const mktVarPct = mktSpendYoy ? ((totalMktSpend - mktSpendYoy) / mktSpendYoy) * 100 : 0;
@@ -173,11 +316,11 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
   const mobilePct = ((mobileSessions / totalDevSessions) * 100).toFixed(1);
   const desktopPct = ((desktopSessions / totalDevSessions) * 100).toFixed(1);
 
-  const baseAtc = addToCart || 1;
-  const checkoutPct = ((checkouts / baseAtc) * 100).toFixed(1);
-  const purchasePct = ((transactions / baseAtc) * 100).toFixed(1);
+  const totalSes = totalSessions || 1;
+  const atcPctSes = ((addToCart / totalSes) * 100).toFixed(1);
+  const checkoutPctAtc = addToCart > 0 ? ((checkouts / addToCart) * 100).toFixed(1) : '0.0';
+  const purchasePctChk = checkouts > 0 ? ((transactions / checkouts) * 100).toFixed(1) : '0.0';
 
-  // Estilos de Apple HIG para Fondos y Títulos
   const panelBg = isDark ? "bg-[#1C1C1E] border-[#2C2C2E]" : "bg-white border-slate-200/80 shadow-sm";
   const titleBlue = isDark ? "text-blue-400" : "text-blue-700";
   const titleEmerald = isDark ? "text-emerald-400" : "text-emerald-700";
@@ -200,9 +343,7 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
     <div className="space-y-6 animate-in fade-in duration-300">
       <CrossFilterBanner theme={theme} />
 
-      {/* Selector de marca (rediseñado 07-ago-2026 -- mismo lenguaje visual
-          que las KPI cards: panelBg + bordes redondeados 2xl, en vez del
-          pill genérico anterior) */}
+      {/* Selector de marca */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className={`flex items-center gap-1.5 p-1.5 rounded-2xl border w-fit ${panelBg}`}>
           {BRANDS.map((b) => {
@@ -210,7 +351,7 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
             return (
               <button
                 key={b.id}
-                onClick={() => setSelectedMarca(b.id)}
+                onClick={() => handleMarcaChange(b.id)}
                 className={`flex items-center gap-2 px-3.5 py-2 rounded-xl transition-all ${
                   isSelected
                     ? isDark
@@ -239,7 +380,7 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
         )}
       </div>
 
-      {/* Top KPI Cards Estilo Apple HIG */}
+      {/* Top KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         
         {/* Card 1: Sesiones GA4 */}
@@ -288,12 +429,12 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
           </div>
         </div>
 
-        {/* Card 3: Ventas D2C */}
+        {/* Card 3: Ventas D2C + SHOWROOM */}
         <div className={`p-5 rounded-2xl border flex flex-col justify-between transition-all hover:shadow-md ${panelBg}`}>
           <div>
             <div className="flex items-center justify-between">
               <span className={`text-[10px] font-black uppercase tracking-wider ${titleEmerald}`}>
-                VENTAS D2C
+                VENTAS D2C + SHOWROOM
               </span>
               <Zap className="w-4 h-4 text-emerald-500 opacity-80" />
             </div>
@@ -378,30 +519,37 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
 
       </div>
 
-      {/* Gráfico de Tendencia Semanal */}
+      {/* Gráfico de Tendencia Semanal con Tooltip Custom YoY */}
       <div className={`p-6 rounded-2xl border shadow-sm ${panelBg}`}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-          <h3 className={`text-xs font-black uppercase tracking-wider flex items-center gap-2 ${titleBlue}`}>
-            <TrendingUp className="w-4 h-4" /> TENDENCIA SEMANAL DE SESIONES GA4 VS INVERSIÓN PUBLICITARIA ($)
-          </h3>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 flex-wrap">
+          <div>
+            <h3 className={`text-xs font-black uppercase tracking-wider flex items-center gap-2 ${titleBlue}`}>
+              <TrendingUp className="w-4 h-4" /> TENDENCIA SEMANAL DE SESIONES GA4 VS INVERSIÓN PUBLICITARIA ($)
+            </h3>
+            <p className={`text-xs font-medium mt-1 ${subtextColor}`}>
+              Comportamiento histórico semanal comparando 2026 vs 2025 YoY
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-[10px] font-bold flex-wrap">
+            <span className="px-2.5 py-1 rounded bg-[#0A84FF] text-white">Sesiones 2026</span>
+            <span className={`px-2.5 py-1 rounded ${isDark ? 'bg-[#38383A] text-slate-200' : 'bg-slate-300 text-slate-700'}`}>Sesiones 2025</span>
+            <span className="px-2.5 py-1 rounded bg-[#FF9F0A] text-white">Inversión 2026</span>
+            <span className="px-2.5 py-1 rounded bg-[#BF5AF2] text-white">Inversión 2025</span>
+          </div>
         </div>
 
-        <div className="h-80 w-full">
+        <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={weeklyData} margin={{ top: 10, right: 20, left: 10, bottom: 10 }}>
-              <XAxis dataKey="week" stroke={isDark ? '#8E8E93' : '#64748b'} fontSize={11} />
+            <ComposedChart data={weeklyData} margin={{ top: 15, right: 10, left: 10, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? '#2C2C2E' : '#E2E8F0'} />
+              <XAxis dataKey="week" stroke={isDark ? '#8E8E93' : '#64748B'} fontSize={10} interval={3} tickLine={false} />
               <YAxis yAxisId="left" hide />
               <YAxis yAxisId="right" orientation="right" hide />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: isDark ? '#1C1C1E' : '#ffffff',
-                  borderColor: isDark ? '#2C2C2E' : '#e2e8f0',
-                  color: isDark ? '#F5F5F7' : '#1e293b',
-                  borderRadius: '12px'
-                }}
-              />
-              <Bar yAxisId="left" dataKey="sessions" name="Sesiones GA4" fill="#0A84FF" radius={[6, 6, 0, 0]} />
-              <Line yAxisId="right" type="monotone" dataKey="spend" name="Inversión ($)" stroke="#FF9F0A" strokeWidth={3} dot={{ r: 5, fill: '#FF9F0A' }} />
+              <Tooltip content={<CustomD2CTooltip isDark={isDark} />} />
+              <Bar yAxisId="left" dataKey="sessions" name="Sesiones 2026" fill="#0A84FF" radius={[4, 4, 0, 0]} />
+              <Bar yAxisId="left" dataKey="sessionsYoy" name="Sesiones 2025" fill={isDark ? '#38383A' : '#cbd5e1'} radius={[4, 4, 0, 0]} opacity={0.7} />
+              <Line yAxisId="right" type="monotone" dataKey="spend" name="Inversión 2026 ($)" stroke="#FF9F0A" strokeWidth={3} dot={false} />
+              <Line yAxisId="right" type="monotone" dataKey="spendYoy" name="Inversión 2025 ($)" stroke="#BF5AF2" strokeWidth={1.5} strokeDasharray="3 3" dot={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -417,14 +565,16 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse min-w-[1000px]">
+          <table className="w-full text-left text-xs border-collapse min-w-[1100px]">
             <thead>
               <tr className={`border-b text-[10px] font-black uppercase tracking-wider ${tableHeaderClass}`}>
                 <SortableTh label="CATEGORÍA" sortKey="categoria" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} />
                 <SortableTh label="INVERSIÓN" sortKey="inversion" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
                 <SortableTh label="INVERSIÓN YOY" sortKey="inversionYoy" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
+                <SortableTh label="VAR % (INV)" sortKey="varInversion" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
                 <SortableTh label="VENTA ACTUAL" sortKey="venta" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" className={`${titleBlue} font-black`} />
                 <SortableTh label="VENTA YOY" sortKey="ventaYoy" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
+                <SortableTh label="VAR % (VENTA)" sortKey="varVenta" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
                 <SortableTh label="TKP ACTUAL" sortKey="tkp" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
                 <SortableTh label="TACOS %" sortKey="tacos" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="center" className={`${titlePurple} font-black`} />
               </tr>
@@ -440,6 +590,9 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
                 const tkp = Number(cat.tkp ?? 0);
                 const catTacos = vta > 0 ? ((inv / vta) * 100) : 0;
 
+                const invVarPct = invYoy > 0 ? ((inv - invYoy) / invYoy) * 100 : (inv > 0 ? 100 : 0);
+                const vtaVarPct = vtaYoy > 0 ? ((vta - vtaYoy) / vtaYoy) * 100 : (vta > 0 ? 100 : 0);
+
                 const rowBg = isSelected
                   ? (isDark ? 'bg-blue-600/30 font-bold border-l-4 border-l-blue-400' : 'bg-blue-50 font-bold border-l-4 border-l-blue-600')
                   : (isDark ? 'hover:bg-[#2C2C2E] text-[#F5F5F7]' : 'hover:bg-slate-50 text-slate-800');
@@ -453,19 +606,42 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
                     <td className="p-3 font-extrabold">{catNombre}</td>
                     <td className="p-3 text-right font-bold">${inv.toLocaleString('es-CL')}</td>
                     <td className={`p-3 text-right ${subtextColor}`}>${invYoy.toLocaleString('es-CL')}</td>
+                    <td className={`p-3 text-right font-extrabold ${invVarPct >= 0 ? titleEmerald : titleRose}`}>
+                      {invVarPct >= 0 ? '+' : ''}{invVarPct.toFixed(1)}%
+                    </td>
                     <td className={`p-3 text-right font-black ${titleBlue}`}>${vta.toLocaleString('es-CL')}</td>
                     <td className={`p-3 text-right ${subtextColor}`}>${vtaYoy.toLocaleString('es-CL')}</td>
+                    <td className={`p-3 text-right font-extrabold ${vtaVarPct >= 0 ? titleEmerald : titleRose}`}>
+                      {vtaVarPct >= 0 ? '+' : ''}{vtaVarPct.toFixed(1)}%
+                    </td>
                     <td className="p-3 text-right font-bold">${Math.round(tkp).toLocaleString('es-CL')}</td>
                     <td className={`p-3 text-center font-black ${titlePurple}`}>{catTacos.toFixed(1)}%</td>
                   </tr>
                 );
               })}
             </tbody>
+            <tfoot className={`border-t-2 ${isDark ? 'border-[#333339] bg-[#18181A]' : 'border-slate-300 bg-slate-100'} font-black uppercase text-xs`}>
+              <tr>
+                <td className="p-3 font-black">TOTAL GENERAL</td>
+                <td className="p-3 text-right font-black">${categoryTotals.inv.toLocaleString('es-CL')}</td>
+                <td className={`p-3 text-right ${subtextColor}`}>${categoryTotals.invYoy.toLocaleString('es-CL')}</td>
+                <td className={`p-3 text-right font-black ${categoryTotals.invVarPct >= 0 ? titleEmerald : titleRose}`}>
+                  {categoryTotals.invVarPct >= 0 ? '+' : ''}{categoryTotals.invVarPct.toFixed(1)}%
+                </td>
+                <td className={`p-3 text-right font-black ${titleBlue}`}>${categoryTotals.vta.toLocaleString('es-CL')}</td>
+                <td className={`p-3 text-right ${subtextColor}`}>${categoryTotals.vtaYoy.toLocaleString('es-CL')}</td>
+                <td className={`p-3 text-right font-black ${categoryTotals.vtaVarPct >= 0 ? titleEmerald : titleRose}`}>
+                  {categoryTotals.vtaVarPct >= 0 ? '+' : ''}{categoryTotals.vtaVarPct.toFixed(1)}%
+                </td>
+                <td className="p-3 text-right font-black">-</td>
+                <td className={`p-3 text-center font-black ${titlePurple}`}>{categoryTotals.tacosPct.toFixed(1)}%</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </div>
 
-      {/* Dispositivos & Embudo de Ventas (Funnel GA4) */}
+      {/* Dispositivos & Embudo de Ventas */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         
         {/* Sesiones por Dispositivo */}
@@ -510,38 +686,48 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
                 <ShoppingBag className="w-4 h-4" /> PROCESO DE COMPRA (FUNNEL GA4)
               </h3>
               <span className={`text-xs font-extrabold bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20 ${titleEmerald}`}>
-                Conv. Carrito {purchasePct}%
+                Conv. Global {conversionRate.toFixed(2)}%
               </span>
             </div>
 
-            <div className="space-y-4 text-xs font-medium">
+            <div className="space-y-3.5 text-xs font-medium">
               <div>
                 <div className="flex justify-between font-bold mb-1">
-                  <span>1. Add to Cart (Agregar al Carrito)</span>
-                  <span className={`font-black ${titleBlue}`}>{addToCart.toLocaleString('es-CL')} u. (100%)</span>
+                  <span>1. Sesiones Totales (Tráfico Web)</span>
+                  <span className={`font-black ${titleBlue}`}>{totalSessions.toLocaleString('es-CL')} ses. (100%)</span>
                 </div>
-                <div className={`w-full h-3 rounded-full overflow-hidden ${isDark ? 'bg-[#333339]' : 'bg-slate-200'}`}>
+                <div className={`w-full h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-[#333339]' : 'bg-slate-200'}`}>
                   <div className="h-full bg-blue-500 rounded-full w-full" />
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between font-bold mb-1">
-                  <span>2. Checkout Started (Inicio Checkout)</span>
-                  <span className={`font-black ${titleAmber}`}>{checkouts.toLocaleString('es-CL')} u. ({checkoutPct}%)</span>
+                  <span>2. Add to Cart (Agregar al Carrito)</span>
+                  <span className={`font-black ${titleBlue}`}>{addToCart.toLocaleString('es-CL')} u. ({atcPctSes}% del tráfico)</span>
                 </div>
-                <div className={`w-full h-3 rounded-full overflow-hidden ${isDark ? 'bg-[#333339]' : 'bg-slate-200'}`}>
-                  <div className="h-full bg-amber-500 rounded-full transition-all duration-500" style={{ width: `${checkoutPct}%` }} />
+                <div className={`w-full h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-[#333339]' : 'bg-slate-200'}`}>
+                  <div className="h-full bg-blue-400 rounded-full transition-all duration-500" style={{ width: `${Math.min(Number(atcPctSes) * 5, 100)}%` }} />
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between font-bold mb-1">
-                  <span>3. Venta Concretada (Transacciones GA4)</span>
-                  <span className={`font-black ${titleEmerald}`}>{transactions.toLocaleString('es-CL')} u. ({purchasePct}%)</span>
+                  <span>3. Checkout Started (Inicio Checkout)</span>
+                  <span className={`font-black ${titleAmber}`}>{checkouts.toLocaleString('es-CL')} u. ({checkoutPctAtc}% de carritos)</span>
                 </div>
-                <div className={`w-full h-3 rounded-full overflow-hidden ${isDark ? 'bg-[#333339]' : 'bg-slate-200'}`}>
-                  <div className="h-full bg-emerald-500 rounded-full transition-all duration-500" style={{ width: `${purchasePct}%` }} />
+                <div className={`w-full h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-[#333339]' : 'bg-slate-200'}`}>
+                  <div className="h-full bg-amber-500 rounded-full transition-all duration-500" style={{ width: `${checkoutPctAtc}%` }} />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between font-bold mb-1">
+                  <span>4. Venta Concretada (Transacciones GA4)</span>
+                  <span className={`font-black ${titleEmerald}`}>{transactions.toLocaleString('es-CL')} u. ({purchasePctChk}% de checkouts)</span>
+                </div>
+                <div className={`w-full h-2.5 rounded-full overflow-hidden ${isDark ? 'bg-[#333339]' : 'bg-slate-200'}`}>
+                  <div className="h-full bg-emerald-500 rounded-full transition-all duration-500" style={{ width: `${purchasePctChk}%` }} />
                 </div>
               </div>
             </div>

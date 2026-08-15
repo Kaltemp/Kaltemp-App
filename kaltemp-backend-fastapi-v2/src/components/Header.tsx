@@ -1,6 +1,12 @@
-import React from 'react';
+// ============================================================
+// ARCHIVO: Header.tsx
+// RUTA: C:\kaltemp_app\kaltemp-backend-fastapi-v2\src\components\Header.tsx
+// ============================================================
+
+import React, { useMemo } from 'react';
 import { ModuleId, ThemeMode } from '../types';
 import { useUser } from '../context/UserContext';
+import { useGlobalFilter } from '../context/FilterContext';
 import { Sparkles } from 'lucide-react';
 import { UserMenu } from './UserMenu';
 
@@ -23,11 +29,16 @@ interface ModuleInfo {
   desc: string;
 }
 
-const MODULE_MAP: Record<ModuleId, ModuleInfo> = {
+const MODULE_MAP: Record<string, ModuleInfo> = {
+  resumen: {
+    category: 'General',
+    name: 'Resumen Ejecutivo',
+    desc: 'Centro de control ejecutivo, KPIs clave y estado general del negocio'
+  },
   principal: {
     category: 'General',
     name: 'Vista Principal Ejecutiva',
-    desc: 'Resumen consolidado de ventas, cumplimiento de metas y margen frontal'
+    desc: 'Consolidado de ventas, cumplimiento de metas y margen frontal'
   },
   ventas_sku: {
     category: 'General',
@@ -101,20 +112,54 @@ const MODULE_MAP: Record<ModuleId, ModuleInfo> = {
   }
 };
 
+const fmtDateCL = (isoStr?: string) => {
+  if (!isoStr || !isoStr.includes('-')) return isoStr || '';
+  const parts = isoStr.split('-');
+  if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  return isoStr;
+};
+
 export const Header: React.FC<HeaderProps> = ({
   theme,
   activeModule,
+  startDate,
+  endDate,
   isSyncing = false
 }) => {
   const isDark = theme === 'dark';
-  const currentInfo = MODULE_MAP[activeModule] || MODULE_MAP.principal;
+  const currentInfo = MODULE_MAP[activeModule] || MODULE_MAP.resumen || MODULE_MAP.principal;
   const { currentUser } = useUser();
+
+  // Lectura segura del contexto global de filtros
+  let globalFilter: any = null;
+  try {
+    globalFilter = useGlobalFilter();
+  } catch (e) {
+    globalFilter = null;
+  }
+
+  // Rango de fechas formateado
+  const fechaBadge = useMemo(() => {
+    const s = startDate || globalFilter?.startDate || globalFilter?.dateRange?.startDate || globalFilter?.fechaInicio || globalFilter?.fecha_inicio;
+    const e = endDate || globalFilter?.endDate || globalFilter?.dateRange?.endDate || globalFilter?.fechaFin || globalFilter?.fecha_fin;
+
+    if (s && e) {
+      return `${fmtDateCL(String(s).slice(0, 10))} ➔ ${fmtDateCL(String(e).slice(0, 10))}`;
+    }
+
+    const hoy = new Date();
+    const hace30 = new Date(hoy.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    return `${fmtDateCL(iso(hace30))} ➔ ${fmtDateCL(iso(hoy))}`;
+  }, [startDate, endDate, globalFilter]);
 
   if (!currentUser) return null;
 
+  // VISIBILIDAD EXCLUSIVA: Solo en el módulo Resumen
+  const isResumen = activeModule === 'resumen';
+
   return (
     <>
-      {/* Estilo CSS exclusivo para cuando el sistema está sincronizando (Pensando) */}
       <style>{`
         @keyframes kaltemp-brand-wave {
           0% { background-position: -200% 0; }
@@ -135,23 +180,41 @@ export const Header: React.FC<HeaderProps> = ({
         }
       `}</style>
 
+      {/* HEADER UNIFICADO: Mismo gris #EAEBED en modo claro para fusionarse con el Sidebar y el Lienzo */}
       <header
-        className={`sticky top-0 z-30 border-b transition-all duration-200 backdrop-blur-md px-4 py-3 sm:px-6 ${
+        className={`sticky top-0 z-30 border-b transition-all duration-200 backdrop-blur-md px-4 py-2.5 sm:px-6 ${
           isDark
-            ? 'bg-[#121214]/90 border-[#2C2C2E]'
-            : 'bg-white/90 border-slate-200/80'
+            ? 'bg-[#0F0F12]/90 border-[#2C2C2E]'
+            : 'bg-[#EAEBED]/95 border-slate-300/80'
         }`}
       >
-        <div className="w-full mx-auto flex items-center justify-between min-h-[36px] gap-3">
+        <div className="w-full mx-auto flex items-center justify-between min-h-[38px] gap-4">
 
-          {/* TÍTULO DEL MÓDULO -- todo lo demás (categorías, campañas,
-              DuckDB/Drive, selector de usuario) vive en Sidebar.tsx */}
-          <div className="flex items-center gap-3 truncate">
-            <h1 className={`text-base sm:text-xl font-black tracking-tight truncate leading-none ${
-              isDark ? 'text-white' : 'text-[#1D1D1F]'
-            }`}>
+          {/* LADO IZQUIERDO: TÍTULO DEL MÓDULO + BADGE SOLO EN RESUMEN */}
+          <div className="flex items-center gap-3.5 min-w-0 flex-wrap">
+            <h1
+              className={`text-base sm:text-lg font-black tracking-tight truncate leading-none ${
+                isDark ? 'text-white' : 'text-slate-900'
+              }`}
+            >
               {currentInfo.name}
             </h1>
+
+            {/* CÁPSULA DE FECHA EXCLUSIVA PARA EL MÓDULO RESUMEN */}
+            {isResumen && (
+              <div
+                className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border shadow-sm shrink-0 transition-all ${
+                  isDark
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                    : 'bg-white text-emerald-800 border-emerald-300'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                <span className="text-[11px] sm:text-xs font-black font-mono tracking-tight">
+                  {fechaBadge}
+                </span>
+              </div>
+            )}
 
             {isSyncing && (
               <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/90 border border-red-500/30 shadow-inner shrink-0">
@@ -163,8 +226,10 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </div>
 
-          {/* Usuario (trasladado desde Sidebar.tsx 07-ago-2026) */}
-          <UserMenu isDark={isDark} />
+          {/* LADO DERECHO: MENÚ DE USUARIO */}
+          <div className="shrink-0 flex items-center gap-2">
+            <UserMenu isDark={isDark} />
+          </div>
         </div>
       </header>
     </>

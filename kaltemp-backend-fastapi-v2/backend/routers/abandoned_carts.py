@@ -1,3 +1,4 @@
+# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\routers\abandoned_carts.py
 import duckdb
 from fastapi import APIRouter, Query
 from typing import Optional, Union, List
@@ -114,6 +115,15 @@ def get_abandoned_carts(
             df_temp = pd.DataFrame()
             if "temperaturas" in tables:
                 df_temp = conn.execute("SELECT CAST(FECHA AS DATE) AS FECHA_CORTE, TEMP_PROM FROM temperaturas").df()
+                # CAST(...AS DATE) en DuckDB vuelve como dtype datetime64 al
+                # pasar por .df() -- mientras que df_ac["FECHA_CORTE"] más
+                # abajo se arma con .dt.date (dtype object, objetos date de
+                # Python puros). pd.merge() no deja cruzar columnas con esos
+                # dos dtypes distintos (confirmado real: "Cannot merge on
+                # object and datetime64[us] columns"). Se normaliza acá para
+                # que ambos lados queden como date object antes del merge.
+                if not df_temp.empty:
+                    df_temp["FECHA_CORTE"] = pd.to_datetime(df_temp["FECHA_CORTE"]).dt.date
         finally:
             conn.close()
 
@@ -209,10 +219,23 @@ def get_abandoned_carts(
                     "value": int(r["count"])
                 })
 
+        # precio_ref usaba AVG(PRECIO_UNITARIO) -- confirmado real (11-ago,
+        # diagnóstico con datos): un mismo PRODUCTO puede tener 2+ precios
+        # reales distintos mezclados (ej. $149.990 y $169.990, variantes o
+        # cambios de precio en el tiempo), y el promedio de esos dos da un
+        # número que ningún cliente vio nunca ($151.755, no termina en 990).
+        # Se cambia a la MODA (precio más frecuente) -- siempre un precio
+        # real que existió, no uno inventado por el promedio.
+        def _precio_mas_frecuente(serie):
+            moda = serie.mode()
+            return float(moda.iloc[0]) if not moda.empty else float(serie.mean())
+
         prod_counts = df_filt.groupby("PRODUCTO").agg(
             carritos=("ID_CHECKOUT", "nunique"),
-            precio_ref=("PRECIO_UNITARIO", "mean")
-        ).reset_index().sort_values(by="carritos", ascending=False).head(5)
+        ).reset_index()
+        precios_moda = df_filt.groupby("PRODUCTO")["PRECIO_UNITARIO"].apply(_precio_mas_frecuente)
+        prod_counts["precio_ref"] = prod_counts["PRODUCTO"].map(precios_moda)
+        prod_counts = prod_counts.sort_values(by="carritos", ascending=False)
 
         top_productos = []
         for _, r in prod_counts.iterrows():

@@ -1,3 +1,9 @@
+# ============================================================
+# ARCHIVO: sync_ventas.py
+# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\sync\sync_ventas.py
+# (Respaldar el archivo actual antes de reemplazar: Copy-Item sync_ventas.py sync_ventas.py.bak)
+# ============================================================
+
 """
 sync/sync_ventas.py — Puebla la tabla `ventas`, base de la que dependen
 el Módulo Principal (/api/channels, /api/tendencia-mensual,
@@ -584,7 +590,9 @@ def sync_ventas(dias_atras: int = 3, progress_callback=None):
     Punto de entrada para sync_master.py. dias_atras=3 por defecto (igual
     de espíritu al "ayer/hoy" original, con un día extra de margen para
     correcciones tardías) -- para la PRIMERA carga histórica completa,
-    llamar con un dias_atras mucho mayor (ver instrucciones de despliegue).
+    usar sync_ventas_historico_resumible() en vez de esta, que escribe
+    todo en un solo golpe al final y puede perder horas de descarga si
+    se corta a mitad de camino.
     """
     def _report(pct, msg):
         if progress_callback:
@@ -605,6 +613,15 @@ def sync_ventas(dias_atras: int = 3, progress_callback=None):
     df_proc = aplicar_matriz_financiera(df_raw, mapa_categorias_sku)
     _report(90, f"💾 Escribiendo {len(df_proc)} líneas en 'ventas'...")
 
+    _escribir_ventas_en_duckdb(df_proc, f_inicio, f_fin)
+
+    _report(100, f"✨ Listo: {len(df_proc)} líneas de venta sincronizadas.")
+
+
+def _escribir_ventas_en_duckdb(df_proc, f_inicio, f_fin):
+    """Extraído de sync_ventas() para reutilizarlo también desde la
+    versión por ventanas -- misma lógica de CREATE TABLE/ALTER/DELETE+
+    INSERT de siempre, sin cambios."""
     with duckdb.connect(DB_FILE) as con:
         con.execute("""
             CREATE TABLE IF NOT EXISTS ventas (
@@ -615,12 +632,10 @@ def sync_ventas(dias_atras: int = 3, progress_callback=None):
                 ES_GLOSA_SERVICIO BOOLEAN
             )
         """)
-        # La tabla `ventas` ya existía antes de este campo -- ALTER TABLE
-        # para que las instalaciones existentes lo tengan sin perder datos.
         try:
             con.execute("ALTER TABLE ventas ADD COLUMN ES_GLOSA_SERVICIO BOOLEAN DEFAULT FALSE")
         except duckdb.Error:
-            pass  # La columna ya existe -- normal en corridas posteriores a la primera.
+            pass
 
         con.execute("DELETE FROM ventas WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ?", [f_inicio, f_fin])
         con.register("df_proc_tmp", df_proc)
@@ -636,7 +651,134 @@ def sync_ventas(dias_atras: int = 3, progress_callback=None):
             FROM df_proc_tmp
         """)
 
-    _report(100, f"✨ Listo: {len(df_proc)} líneas de venta sincronizadas.")
+
+# ---------------------------------------------------------------------
+# CARGA HISTÓRICA RESUMIBLE (agregado 10-ago-2026, a pedido de William)
+# ---------------------------------------------------------------------
+# sync_ventas() de arriba descarga TODO el rango pedido en memoria y
+# recién escribe a DuckDB al final (90%) -- si se corta antes de eso
+# (ej. uvicorn se reinicia por --reload al guardar un archivo), se
+# pierde la descarga completa, sin importar si iba en el lote 300.
+#
+# Esta versión parte el rango en VENTANAS chicas (30 días por defecto).
+# Cada ventana se descarga, procesa y ESCRIBE a DuckDB por separado --
+# si se corta a mitad de una ventana, las ventanas anteriores ya están
+# guardadas. Además guarda un CHECKPOINT (tabla sync_checkpoint) con la
+# última ventana completada -- si se vuelve a lanzar, arranca desde ahí
+# en vez de repetir desde el día 1.
+def _leer_checkpoint(con):
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS sync_checkpoint (
+            proceso VARCHAR PRIMARY KEY,
+            checkpoint_fecha DATE,
+            actualizado_en TIMESTAMP
+        )
+    """)
+    row = con.execute(
+        "SELECT checkpoint_fecha FROM sync_checkpoint WHERE proceso = 'ventas_historico'"
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _guardar_checkpoint(con, fecha):
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS sync_checkpoint (
+            proceso VARCHAR PRIMARY KEY,
+            checkpoint_fecha DATE,
+            actualizado_en TIMESTAMP
+        )
+    """)
+    con.execute(
+        "INSERT OR REPLACE INTO sync_checkpoint (proceso, checkpoint_fecha, actualizado_en) VALUES (?, ?, ?)",
+        ["ventas_historico", fecha, datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)],
+    )
+
+
+def reiniciar_checkpoint_ventas():
+    """Borra el checkpoint -- usar si se quiere forzar que la próxima
+    corrida arranque desde el día 1 otra vez (ej. si cambiaste el
+    número total de días pedidos a uno mayor al ya cubierto)."""
+    with duckdb.connect(DB_FILE) as con:
+        con.execute("CREATE TABLE IF NOT EXISTS sync_checkpoint (proceso VARCHAR PRIMARY KEY, checkpoint_fecha DATE, actualizado_en TIMESTAMP)")
+        con.execute("DELETE FROM sync_checkpoint WHERE proceso = 'ventas_historico'")
+
+
+def sync_ventas_historico_resumible(dias_atras: int = 1825, ventana_dias: int = 30, progress_callback=None,
+                                      forzar_reproceso: bool = False):
+    """Versión por ventanas + checkpoint de la carga histórica de ventas.
+    Reintentable: si se corta a mitad de camino, la próxima llamada con
+    los mismos (o más) dias_atras retoma justo después del checkpoint.
+
+    forzar_reproceso (agregado 11-ago-2026, a pedido de William): por
+    default (False) el checkpoint puede hacer que un rango ya cubierto
+    se salte por completo ("Ya estaba al día") -- útil para NO repetir
+    una carga histórica gigante ya terminada, pero un problema real si
+    lo que buscás es capturar cambios que pasaron en Bsale DESPUÉS de
+    la primera carga (una NC aplicada más tarde, un precio corregido,
+    etc.) -- esos cambios nunca se reflejarían porque el rango se salta
+    entero. Con forzar_reproceso=True se IGNORA el checkpoint para
+    decidir si arrancar o no -- el rango pedido (los últimos
+    `dias_atras` días) siempre se vuelve a descargar y reemplazar desde
+    cero. El checkpoint se sigue guardando igual mientras corre, así que
+    si esta corrida se corta a mitad de camino, una llamada posterior
+    SIN forzar_reproceso todavía puede retomar desde ahí."""
+    def _report(pct, msg):
+        if progress_callback:
+            progress_callback(pct, msg)
+        print(f"[{pct}%] {msg}")
+
+    hoy = datetime.date.today()
+    rango_inicio = hoy - datetime.timedelta(days=dias_atras)
+    rango_fin = hoy
+
+    if forzar_reproceso:
+        ventana_inicio = rango_inicio
+        _report(1, f"🔁 forzar_reproceso=True -- reprocesando {rango_inicio} → {rango_fin} desde cero, "
+                    f"sin importar qué diga el checkpoint.")
+    else:
+        with duckdb.connect(DB_FILE) as con:
+            checkpoint = _leer_checkpoint(con)
+
+        if checkpoint and checkpoint >= rango_inicio:
+            ventana_inicio = checkpoint + datetime.timedelta(days=1)
+            _report(1, f"↩️ Retomando desde checkpoint: {ventana_inicio} (ya cubierto hasta {checkpoint})")
+        else:
+            ventana_inicio = rango_inicio
+            _report(1, f"🚀 Carga histórica de ventas desde cero: {rango_inicio} → {rango_fin}")
+
+    if ventana_inicio > rango_fin:
+        _report(100, "✅ Ya estaba al día -- nada nuevo que cargar en este rango.")
+        return
+
+    total_dias = (rango_fin - rango_inicio).days or 1
+    mapa_categorias_sku = _cargar_mapa_categorias_sku()
+
+    while ventana_inicio <= rango_fin:
+        ventana_fin = min(ventana_inicio + datetime.timedelta(days=ventana_dias - 1), rango_fin)
+
+        avance_dias = (ventana_inicio - rango_inicio).days
+        pct = min(2 + int((avance_dias / total_dias) * 95), 97)
+        _report(pct, f"📅 Ventana {ventana_inicio} → {ventana_fin}...")
+
+        try:
+            df_raw = cargar_datos_bsale_dinamico(ventana_inicio, ventana_fin, None)
+            if not df_raw.empty:
+                df_proc = aplicar_matriz_financiera(df_raw, mapa_categorias_sku)
+                _escribir_ventas_en_duckdb(df_proc, ventana_inicio, ventana_fin)
+                _report(pct, f"💾 Ventana {ventana_inicio} → {ventana_fin}: {len(df_proc)} líneas guardadas.")
+            else:
+                _report(pct, f"ℹ️ Ventana {ventana_inicio} → {ventana_fin}: sin ventas.")
+
+            with duckdb.connect(DB_FILE) as con:
+                _guardar_checkpoint(con, ventana_fin)
+
+        except Exception as e:
+            _report(pct, f"⚠️ Error en ventana {ventana_inicio}→{ventana_fin}: {e} -- se detiene acá, el checkpoint quedó en la última ventana OK.")
+            raise
+
+        ventana_inicio = ventana_fin + datetime.timedelta(days=1)
+
+    _report(100, f"✨ Carga histórica de ventas completa: {rango_inicio} → {rango_fin}.")
 
 
 if __name__ == "__main__":

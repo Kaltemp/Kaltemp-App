@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { ThemeMode } from '../types';
+import { ThemeMode, BrandMode} from '../types';
+import { getBrandTokens } from '../theme/brandTokens';
 import { 
   Target, 
   Globe, 
@@ -36,6 +37,7 @@ import {
 
 interface Props {
   theme: ThemeMode;
+  brandMode: BrandMode;
 }
 
 const ICONO_FUENTE: Record<string, { icon: any; color: string }> = {
@@ -56,8 +58,9 @@ const iniciales = (nombre: string) =>
     .map((p) => p[0]?.toUpperCase())
     .join('') || '??';
 
-export const LeadsView: React.FC<Props> = ({ theme }) => {
+export const LeadsView: React.FC<Props> = ({ theme, brandMode }) => {
   const isDark = theme === 'dark';
+  const brandTokens = getBrandTokens(brandMode, isDark);
   const { startDate, endDate } = useGlobalFilter();
 
   const [data, setData] = useState<any | null>(null);
@@ -138,8 +141,8 @@ export const LeadsView: React.FC<Props> = ({ theme }) => {
 
       {/* Encabezado */}
       <div className="flex items-center justify-between">
-        <h1 className={`text-2xl font-black tracking-tight flex items-center gap-2.5 ${titleBlue}`}>
-          <Target className="w-7 h-7 text-blue-600 dark:text-blue-400" /> CRM Leads &amp; Gestión Comercial
+        <h1 className="text-2xl font-black tracking-tight flex items-center gap-2.5" style={{ color: brandTokens.accent }}>
+          <Target className="w-7 h-7" style={{ color: brandTokens.accent }} /> CRM Leads &amp; Gestión Comercial
         </h1>
       </div>
 

@@ -34,6 +34,14 @@ def _query(con, group_cols: list[str], where_extra: str, params_extra: list, fec
         # servicio técnico sin SKU real (ES_GLOSA_SERVICIO) cuentan en
         # venta/cantidad, pero se excluyen de neto/contribución para no
         # distorsionar el % de margen por producto.
+        #
+        # DESPACHO (07-ago-2026, confirmado con William): en ESTE módulo
+        # (Ventas por SKU, 100% centrado en producto) se excluyen del TODO
+        # -- unidades y venta también, no solo neto/contribución -- porque
+        # un despacho no es un producto y no debe poder aparecer como fila
+        # en el Top 15 ni en ningún nivel del árbol (vendedor/documento/
+        # cliente). Esto es distinto del resto de la app (KPIs de venta
+        # total SÍ incluyen despacho) porque acá cada fila ES un producto.
         extra_select = (
             ", SUM(CASE WHEN ES_GLOSA_SERVICIO THEN 0 ELSE NETO_TOTAL END) AS neto,"
             " SUM(CASE WHEN ES_GLOSA_SERVICIO THEN 0 ELSE CONTRIBUCION END) AS contri"
@@ -45,6 +53,7 @@ def _query(con, group_cols: list[str], where_extra: str, params_extra: list, fec
                 {extra_select}
             FROM ventas
             WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ?
+              AND NOT ES_GLOSA_SERVICIO
             {where_extra}
             GROUP BY {cols}
         """
@@ -227,6 +236,7 @@ def get_categoria_resumen(
             FROM ventas
             WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ?
               AND CATEGORIA IS NOT NULL AND TRIM(CATEGORIA) != ''
+              AND NOT ES_GLOSA_SERVICIO
               {extra_sql}
             GROUP BY CATEGORIA
             ORDER BY venta DESC

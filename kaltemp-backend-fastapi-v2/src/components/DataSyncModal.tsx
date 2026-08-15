@@ -1,3 +1,16 @@
+// ============================================================
+// ARCHIVO: DataSyncModal.tsx
+// GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\src\components\DataSyncModal.tsx
+// ('Actualizar Ahora' ahora sí pasa 30 días a TODAS las tablas que
+//  lo soportan, no solo ventas. Respaldar: Copy-Item DataSyncModal.tsx DataSyncModal.tsx.bak)
+// ============================================================
+
+// ============================================================
+// ARCHIVO: DataSyncModal.tsx
+// GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\src\components\DataSyncModal.tsx
+// (Respaldar el archivo actual antes de reemplazar: Copy-Item DataSyncModal.tsx DataSyncModal.tsx.bak)
+// ============================================================
+
 import React, { useState, useEffect } from 'react';
 import { Database, HardDrive, RefreshCw, UploadCloud, CheckCircle2, AlertCircle, FileText, ExternalLink, X, Table, Key, ShieldCheck, ChevronDown, ChevronUp, Play, Clock } from 'lucide-react';
 
@@ -49,6 +62,8 @@ export const DataSyncModal: React.FC<DataSyncModalProps> = ({ isOpen, onClose, i
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [diasHistorico, setDiasHistorico] = useState('1825');
+  const [pasosDisponibles, setPasosDisponibles] = useState<string[]>([]);
+  const [pasoCorriendo, setPasoCorriendo] = useState<string | null>(null);
 
   const fetchSyncStatus = async () => {
     try {
@@ -65,6 +80,16 @@ export const DataSyncModal: React.FC<DataSyncModalProps> = ({ isOpen, onClose, i
     fetchSyncStatus();
     const intervalo = setInterval(fetchSyncStatus, 3000);
     return () => clearInterval(intervalo);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    fetch('/api/sync/pasos')
+      .then((res) => res.json())
+      .then((data) => setPasosDisponibles(data.pasos || []))
+      .catch(() => {
+        // silencioso -- si falla, simplemente no se muestran los botones individuales
+      });
   }, [isOpen]);
 
   const handleIniciarIncremental = async () => {
@@ -98,13 +123,66 @@ export const DataSyncModal: React.FC<DataSyncModalProps> = ({ isOpen, onClose, i
       });
       const data = await res.json();
       if (data.iniciado) {
-        setActionMessage({ type: 'info', text: `Carga histórica iniciada (${dias} días) -- puede tardar horas, puedes cerrar este modal y seguir usando la app.` });
+        setActionMessage({ type: 'info', text: `Reproceso de los últimos ${dias} días iniciado en todas las tablas -- puedes cerrar este modal y seguir usando la app.` });
         fetchSyncStatus();
       } else {
         setActionMessage({ type: 'error', text: data.error || 'No se pudo iniciar la carga histórica.' });
       }
     } catch (err: any) {
       setActionMessage({ type: 'error', text: err?.message || 'Error al iniciar la carga histórica' });
+    }
+  };
+
+  const handleIniciarHistoricoCompleto = async () => {
+    setActionMessage(null);
+    const dias = parseInt(diasHistorico, 10);
+    if (!dias || dias < 1) {
+      setActionMessage({ type: 'error', text: 'Ingresa un número de días válido.' });
+      return;
+    }
+    try {
+      const res = await fetch('/api/sync/historico-completo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dias }),
+      });
+      const data = await res.json();
+      if (data.iniciado) {
+        setActionMessage({
+          type: 'info',
+          text: `Carga histórica completa iniciada (${dias} días, las ${data.pasos?.length ?? ''} tablas en orden) -- puede tardar varias horas. Si se corta a mitad de camino, las tablas ya procesadas quedan guardadas; usa los botones individuales de abajo para re-lanzar solo la que faltó.`,
+        });
+        fetchSyncStatus();
+      } else {
+        setActionMessage({ type: 'error', text: data.error || 'No se pudo iniciar la carga histórica completa.' });
+      }
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err?.message || 'Error al iniciar la carga histórica completa' });
+    }
+  };
+
+  const handleIniciarPaso = async (nombrePaso: string) => {
+    setActionMessage(null);
+    setPasoCorriendo(nombrePaso);
+    const dias = parseInt(diasHistorico, 10) || undefined;
+    try {
+      const res = await fetch(`/api/sync/paso/${encodeURIComponent(nombrePaso)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // dias solo aplica de verdad para "ventas" y "enviame_despachos" -- el resto lo ignora
+        body: JSON.stringify({ dias }),
+      });
+      const data = await res.json();
+      if (data.iniciado) {
+        setActionMessage({ type: 'info', text: `Sincronizando solo "${nombrePaso}"...` });
+        fetchSyncStatus();
+      } else {
+        setActionMessage({ type: 'error', text: data.error || `No se pudo iniciar el paso "${nombrePaso}".` });
+      }
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err?.message || `Error al iniciar el paso "${nombrePaso}"` });
+    } finally {
+      setPasoCorriendo(null);
     }
   };
 
@@ -241,7 +319,7 @@ export const DataSyncModal: React.FC<DataSyncModalProps> = ({ isOpen, onClose, i
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className={`relative max-w-2xl w-full rounded-2xl p-6 shadow-2xl border ${
+      <div className={`relative max-w-2xl w-full max-h-[90vh] overflow-y-auto rounded-2xl p-6 shadow-2xl border ${
         isDark ? 'bg-[#1C1C1E] border-[#333339] text-white' : 'bg-white border-slate-200 text-slate-900'
       }`}>
         {/* Header */}
@@ -472,14 +550,70 @@ export const DataSyncModal: React.FC<DataSyncModalProps> = ({ isOpen, onClose, i
                 disabled={!!syncStatus?.corriendo}
                 className="flex-1 py-2 px-3 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-lg shadow-purple-600/20"
               >
-                Carga Histórica (días)
+                Reprocesar Últimos {diasHistorico || '?'} Días (todas las tablas)
               </button>
             </div>
           </div>
+
+          <button
+            onClick={handleIniciarHistoricoCompleto}
+            disabled={!!syncStatus?.corriendo}
+            className="w-full mt-3 py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-lg shadow-indigo-600/20"
+          >
+            <Database className="w-3.5 h-3.5" /> Carga Histórica Completa (todas las tablas, {diasHistorico || '?'} días para ventas)
+          </button>
+
           <p className="text-[10px] text-slate-500 mt-2">
-            "Actualizar Ahora" corre ventas + stock + pendientes + notas de crédito + falabella + envíame (30 días).
-            "Carga Histórica" solo re-sincroniza ventas, en la ventana de días que indiques -- úsalo una vez para el historial completo.
+            "Actualizar Ahora" corre las 16 tablas con ventana de 30 días (sku_maestro, stock_bsale y marketing no tienen ventana de fecha, siempre traen todo).
+            "Reprocesar Últimos N Días" vuelve a descargar y reemplazar la ventana de N días que indiques arriba en todas las tablas que lo soportan de forma segura,
+            forzando el reproceso para capturar cambios hechos después de la carga original (útil tras corregir algo en Bsale/Meta/GA4). No incluye "Estado Falabella" ni
+            "Pendientes por Despachar" (esas dos necesitan su ventana completa para no perder documentos aún pendientes de hace más de N días -- usa "Carga Histórica Completa" o su botón individual para esas).
+            "Carga Histórica Completa" corre las 16 tablas en orden, con ventas usando esos mismos días -- puede tardar horas.
           </p>
+
+          {/* Botones por tabla individual -- para cargar/reintentar de a una, sin perder
+              el progreso de las demás si algo se corta a mitad de camino */}
+          {pasosDisponibles.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-slate-200/60 dark:border-[#2C2C2E]">
+              <p className="text-[11px] font-bold text-slate-400 mb-2">
+                O actualiza una tabla a la vez (recomendado para cargas históricas largas):
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {pasosDisponibles.map((nombre) => {
+                  const resultadoPrevio = syncStatus?.resultados?.[nombre];
+                  const corriendoEste = syncStatus?.corriendo && syncStatus?.paso_actual === nombre;
+                  return (
+                    <button
+                      key={nombre}
+                      onClick={() => handleIniciarPaso(nombre)}
+                      disabled={!!syncStatus?.corriendo}
+                      title={
+                        nombre === 'sku_maestro' || nombre === 'stock_bsale' || nombre === 'marketing'
+                          ? 'Esta tabla no usa ventana de fecha (trae catálogo/snapshot/histórico completo siempre)'
+                          : `Usa los ${diasHistorico || '?'} días indicados arriba`
+                      }
+                      className={`py-1.5 px-2 rounded-md border text-[10px] font-mono truncate flex items-center gap-1 transition-colors disabled:opacity-50 ${
+                        corriendoEste
+                          ? 'bg-blue-500/10 border-blue-500/40 text-blue-400'
+                          : resultadoPrevio === 'OK'
+                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/20'
+                          : resultadoPrevio && resultadoPrevio.startsWith('ERROR')
+                          ? 'bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20'
+                          : isDark
+                          ? 'bg-[#1C1C1E] border-[#333339] text-slate-300 hover:border-blue-500'
+                          : 'bg-white border-slate-300 text-slate-600 hover:border-blue-500'
+                      }`}
+                    >
+                      {corriendoEste && <RefreshCw className="w-2.5 h-2.5 animate-spin shrink-0" />}
+                      {resultadoPrevio === 'OK' && !corriendoEste && <CheckCircle2 className="w-2.5 h-2.5 shrink-0" />}
+                      {resultadoPrevio?.startsWith('ERROR') && !corriendoEste && <AlertCircle className="w-2.5 h-2.5 shrink-0" />}
+                      <span className="truncate">{nombre}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Sync Options Grid */}

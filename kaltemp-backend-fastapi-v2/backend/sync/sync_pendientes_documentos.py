@@ -1,3 +1,4 @@
+# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\sync\sync_pendientes_documentos.py
 """
 sync_pendientes_documentos.py — Puebla `pendientes_despacho_docs` en
 kaltemp_matrix.duckdb: el detalle por DOCUMENTO (boleta/factura/cotización)
@@ -157,11 +158,24 @@ def _iterar_documentos_venta(fecha_desde: int, fecha_hasta: int):
             yield tipo, doc
 
 
-def sync_pendientes_documentos():
-    fecha_desde_dt = datetime.strptime(FECHA_DESDE_STR, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+def sync_pendientes_documentos(dias_atras: int = None, progress_callback=None):
+    """
+    dias_atras (agregado 11-ago-2026, mismo motivo que en
+    sync_notas_credito.py): si se pasa, la ventana se calcula como hoy
+    menos esos días, con prioridad sobre PXD_FECHA_DESDE. progress_callback
+    se acepta solo para no romper si sync_admin.py lo pasa (este script
+    no reporta progreso incremental todavía).
+    """
+    if dias_atras is not None:
+        fecha_desde_dt = (datetime.now(timezone.utc) - timedelta(days=dias_atras)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        print(f"[{datetime.now()}] Rango: últimos {dias_atras} días (desde {fecha_desde_dt.date()}) → hoy")
+    else:
+        fecha_desde_dt = datetime.strptime(FECHA_DESDE_STR, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        print(f"[{datetime.now()}] Rango: {FECHA_DESDE_STR} → hoy")
     fecha_desde = _epoch(fecha_desde_dt)
     fecha_hasta = _epoch(datetime.now(timezone.utc))
-    print(f"[{datetime.now()}] Rango: {FECHA_DESDE_STR} → hoy")
 
     print(f"[{datetime.now()}] Cargando mapa de oficinas/bodegas...")
     mapa_oficinas = _cargar_oficinas()

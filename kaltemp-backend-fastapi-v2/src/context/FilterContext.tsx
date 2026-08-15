@@ -1,3 +1,11 @@
+// ============================================================
+// ARCHIVO: FilterContext.tsx
+// GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\src\context\FilterContext.tsx
+// (Agrega RIPLEY y OFICINA a ALL_CHANNELS -- estaban siendo calculados
+//  bien por el backend pero invisibles en la matriz por esta lista.
+//  Respalda: Copy-Item FilterContext.tsx FilterContext.tsx.bak)
+// ============================================================
+
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { fetchFiltrosGlobales } from '../services/api';
 
@@ -28,6 +36,8 @@ export const ALL_CHANNELS = [
   'INMOBILIARIAS',
   'MERCADOLIBRE',
   'TOM PALMER',
+  'RIPLEY',
+  'OFICINA',
   'OTROS'
 ];
 
@@ -293,4 +303,3 @@ export const useGlobalFilter = () => {
   }
   return context;
 };
-

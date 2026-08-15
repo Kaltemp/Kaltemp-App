@@ -1,12 +1,32 @@
+# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\sync\sync_abandoned_carts.py
 """
 sync/sync_abandoned_carts.py — Sincroniza los carritos abandonados de Shopify
 hacia la tabla `abandoned_checkouts` en kaltemp_matrix.duckdb.
+
+CORREGIDO (11-ago-2026, 3 bugs reales confirmados con diagnóstico):
+1. Sin ventana de fecha: pedía checkouts.json sin `created_at_min`, así
+   que Shopify devolvía los 250 MÁS VIEJOS de toda la tienda (ordena por
+   ID ascendente por default) -- confirmado real: la primera página
+   traía un checkout de octubre 2023, nada útil para seguimiento de
+   carritos abandonados recientes. Ahora se filtra con created_at_min,
+   ventana configurable vía ABANDONED_CARTS_DIAS_ATRAS (default 60,
+   mismo patrón que ENVIAME_DIAS_ATRAS).
+2. Sin paginación: se quedaba con la primera página (limit=250) aunque
+   el header `Link` de la respuesta confirmara que había más páginas
+   (rel="next") -- confirmado real con diagnóstico. Ahora sigue ese
+   header hasta agotar las páginas.
+3. Error tragado en silencio: si la llamada a Shopify fallaba (token
+   vencido, DNS, timeout), el código seguía de largo, hacía
+   `DELETE FROM abandoned_checkouts` e insertaba la lista vacía que
+   quedaba -- dejando la tabla vacía sin ningún aviso visible más allá
+   de un print(). Ahora, si la descarga no fue exitosa, NO se toca la
+   tabla (se conserva lo que había de la corrida anterior).
 """
 import os
-import sys
+import time
 import requests
 import duckdb
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
@@ -21,6 +41,11 @@ DB_FILE = os.getenv("DUCKDB_PATH", os.path.join(_AQUI, "..", "kaltemp_matrix.duc
 if SHOPIFY_STORE:
     SHOPIFY_STORE = SHOPIFY_STORE.replace("https://", "").replace("http://", "").strip("/")
 
+# Límite defensivo de páginas -- 250 checkouts/página; 200 páginas cubre
+# hasta 50.000 checkouts en la ventana pedida. Evita un loop infinito si
+# Shopify alguna vez devolviera un Link mal formado que apunte a sí mismo.
+_MAX_PAGINAS = 200
+
 
 def parsear_fecha(val_fecha):
     if not val_fecha:
@@ -33,41 +58,86 @@ def parsear_fecha(val_fecha):
         return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def descargar_checkouts_shopify():
-    """Descarga los carritos abandonados desde la API Admin de Shopify"""
+def _extraer_siguiente_url(headers) -> str | None:
+    """Parsea el header Link estilo RFC 5988 que devuelve Shopify, ej.:
+    '<https://.../checkouts.json?...>; rel="next"' (puede traer también
+    rel="previous" en la misma cabecera, separados por coma)."""
+    link_header = headers.get("Link")
+    if not link_header:
+        return None
+    for parte in link_header.split(","):
+        if 'rel="next"' in parte:
+            inicio = parte.find("<")
+            fin = parte.find(">")
+            if inicio != -1 and fin != -1:
+                return parte[inicio + 1:fin]
+    return None
+
+
+def descargar_checkouts_shopify(dias_atras: int = 60):
+    """Descarga los carritos abandonados desde la API Admin de Shopify,
+    paginando con el header Link hasta agotar las páginas o llegar a
+    _MAX_PAGINAS. Devuelve (checkouts, exito) -- exito=False si hubo
+    CUALQUIER error de red/HTTP, para que el llamador NO borre lo que
+    ya había en la tabla."""
     if not SHOPIFY_TOKEN or not SHOPIFY_STORE:
         print("⚠️ Falta SHOPIFY_TOKEN y/o SHOPIFY_STORE en el archivo .env")
-        return []
+        return [], False
 
-    checkouts = []
-    # API Admin Endpoint para Checkouts de Shopify
-    url = f"https://{SHOPIFY_STORE}/admin/api/2024-04/checkouts.json?limit=250&status=any"
-    headers = {
+    fecha_desde = (datetime.now(timezone.utc) - timedelta(days=dias_atras)).strftime("%Y-%m-%dT00:00:00Z")
+    headers_req = {
         "X-Shopify-Access-Token": SHOPIFY_TOKEN,
         "Content-Type": "application/json"
     }
+    url = (
+        f"https://{SHOPIFY_STORE}/admin/api/2024-04/checkouts.json"
+        f"?limit=250&status=any&created_at_min={fecha_desde}"
+    )
 
+    checkouts = []
+    pagina = 0
     try:
-        res = requests.get(url, headers=headers, timeout=30)
-        if res.status_code == 200:
+        while url and pagina < _MAX_PAGINAS:
+            pagina += 1
+            res = requests.get(url, headers=headers_req, timeout=30)
+            if res.status_code != 200:
+                print(f"⚠️ Error consultando Shopify ({res.status_code}) en página {pagina}: {res.text[:300]}")
+                return checkouts, False
+
             data = res.json()
-            checkouts = data.get("checkouts", [])
-        else:
-            print(f"⚠️ Error consultando Shopify ({res.status_code}): {res.text[:300]}")
+            checkouts.extend(data.get("checkouts", []))
+            url = _extraer_siguiente_url(res.headers)
+            if url:
+                time.sleep(0.3)  # no saturar el rate limit de Shopify entre páginas
+
+        if pagina >= _MAX_PAGINAS and url:
+            print(f"⚠️ Se alcanzó el límite de {_MAX_PAGINAS} páginas con más datos disponibles -- "
+                  f"considera acortar ABANDONED_CARTS_DIAS_ATRAS.")
+
     except Exception as e:
-        print(f"⚠️ Error de conexión con Shopify: {e}")
+        print(f"⚠️ Error de conexión con Shopify (página {pagina}): {e}")
+        return checkouts, False
 
-    return checkouts
+    return checkouts, True
 
 
-def sync_abandoned_carts(progress_callback=None):
+def sync_abandoned_carts(progress_callback=None, dias_atras: int = None):
     def report(pct, msg):
         if progress_callback:
             progress_callback(pct, msg)
         print(f"[{pct}%] {msg}")
 
-    report(5, "🛒 Conectando con API de Shopify para sincronizar Carritos Abandonados...")
-    raw_checkouts = descargar_checkouts_shopify()
+    if dias_atras is None:
+        dias_atras = int(os.getenv("ABANDONED_CARTS_DIAS_ATRAS", "60"))
+
+    report(5, f"🛒 Conectando con API de Shopify para sincronizar Carritos Abandonados (últimos {dias_atras} días)...")
+    raw_checkouts, exito = descargar_checkouts_shopify(dias_atras=dias_atras)
+
+    if not exito:
+        report(100, "❌ Falló la descarga desde Shopify -- se conserva la tabla anterior sin cambios "
+                     "(no se borra por un error de red/API).")
+        return
+
     report(40, f"📥 {len(raw_checkouts)} carritos/checkouts descargados de Shopify.")
 
     filas = []
@@ -125,7 +195,19 @@ def sync_abandoned_carts(progress_callback=None):
                 PRECIO_UNITARIO DOUBLE, TOTAL_PRICE DOUBLE, ESTADO VARCHAR
             )
         """)
-        con.execute("DELETE FROM abandoned_checkouts")
+        # FIX (15-ago-2026, a pedido de William -- ver auditoría del chat):
+        # antes esto era `DELETE FROM abandoned_checkouts` SIN WHERE --
+        # borraba la tabla ENTERA y la dejaba con solo lo que se acababa
+        # de descargar (la ventana de dias_atras). Con dias_atras=30 (el
+        # que ya manda "Actualizar Ahora" hoy) esto ya estaba perdiendo
+        # cualquier carrito histórico más viejo. Ahora solo se borra +
+        # reinserta la ventana de fechas que efectivamente se volvió a
+        # descargar de Shopify -- el resto del histórico queda intacto.
+        fecha_corte = (datetime.now(timezone.utc) - timedelta(days=dias_atras)).date()
+        con.execute(
+            "DELETE FROM abandoned_checkouts WHERE CAST(FECHA_OBJ AS DATE) >= CAST(? AS DATE)",
+            [fecha_corte],
+        )
         con.executemany(
             """INSERT INTO abandoned_checkouts
                (ID_CHECKOUT, FECHA_OBJ, CLIENTE, EMAIL, PRODUCTO, SKU, PRECIO_UNITARIO, TOTAL_PRICE, ESTADO)

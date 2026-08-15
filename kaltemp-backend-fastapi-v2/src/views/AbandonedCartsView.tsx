@@ -1,5 +1,7 @@
+// GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\components\AbandonedCartsView.tsx (o la carpeta donde ya vive hoy)
 import React, { useState, useEffect } from 'react';
-import { ThemeMode } from '../types';
+import { ThemeMode, BrandMode} from '../types';
+import { getBrandTokens } from '../theme/brandTokens';
 import { ShoppingCart, DollarSign, RefreshCw, Percent, TrendingDown, ArrowUpRight } from 'lucide-react';
 import { useGlobalFilter, ALL_CATEGORIES, ALL_CHANNELS, ALL_REPS, ALL_WAREHOUSES } from '../context/FilterContext';
 import { fetchAbandonedCarts } from '../services/api';
@@ -7,10 +9,12 @@ import { CrossFilterBanner } from '../components/CrossFilterBanner';
 
 interface Props {
   theme: ThemeMode;
+  brandMode: BrandMode;
 }
 
-export const AbandonedCartsView: React.FC<Props> = ({ theme }) => {
+export const AbandonedCartsView: React.FC<Props> = ({ theme, brandMode }) => {
   const isDark = theme === 'dark';
+  const brandTokens = getBrandTokens(brandMode, isDark);
 
   const { 
     startDate, 
@@ -58,7 +62,7 @@ export const AbandonedCartsView: React.FC<Props> = ({ theme }) => {
   ]);
 
   const totalCarritos = data?.totalCarritos ?? 0;
-  const oportunidadPerdida = data?.montoOportunidadPerdida ?? 0;
+  const oportunidadPerdida = data?.oportunidadPerdida ?? 0;
   const recuperados = data?.carritosRecuperados ?? 0;
   const tasaRecuperacion = data?.tasaRecuperacion ?? 0;
   const topProductos = Array.isArray(data?.topProductos) ? data.topProductos : [];
@@ -88,8 +92,8 @@ export const AbandonedCartsView: React.FC<Props> = ({ theme }) => {
 
       {/* Encabezado */}
       <div className="flex items-center justify-between">
-        <h1 className={`text-2xl font-black tracking-tight flex items-center gap-2.5 ${titleRed}`}>
-          <ShoppingCart className="w-7 h-7 text-red-600" /> Carros Abandonados Shopify
+        <h1 className="text-2xl font-black tracking-tight flex items-center gap-2.5" style={{ color: brandTokens.accent }}>
+          <ShoppingCart className="w-7 h-7" style={{ color: brandTokens.accent }} /> Carros Abandonados Shopify
         </h1>
       </div>
 
@@ -179,12 +183,12 @@ export const AbandonedCartsView: React.FC<Props> = ({ theme }) => {
       {/* Tabla Top Productos Abandonados */}
       <div className={`p-6 rounded-2xl border shadow-sm ${panelBg}`}>
         <h3 className={`text-xs font-black uppercase tracking-wider mb-4 flex items-center gap-2 ${titleBlue}`}>
-          <TrendingDown className="w-4 h-4" /> TOP PRODUCTOS MÁS ABANDONADOS
+          <TrendingDown className="w-4 h-4" /> TOP PRODUCTOS MÁS ABANDONADOS ({topProductos.length})
         </h3>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-auto max-h-[480px] rounded-lg border border-slate-200/60 dark:border-[#2C2C2E]">
           <table className="w-full text-left text-xs border-collapse">
-            <thead>
+            <thead className={`sticky top-0 z-10 ${isDark ? 'bg-[#17171A]' : 'bg-slate-50'}`}>
               <tr className={`border-b text-[11px] font-black uppercase tracking-wider ${tableHeaderClass}`}>
                 <th className="p-3">PRODUCTO</th>
                 <th className="p-3 text-center">CARRITOS</th>

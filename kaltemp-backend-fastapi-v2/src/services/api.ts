@@ -1,3 +1,8 @@
+// ============================================================
+// Archivo: api.ts
+// Ruta:    src/services/api.ts
+// ============================================================
+
 // --- SERVICIO DE API CENTRALIZADO Y MAESTRO (Kaltemp Dashboard) ---
 
 const AUTH_TOKEN_KEY = 'kaltemp_auth_token';
@@ -229,14 +234,18 @@ export async function fetchPendientesDespachoDocumentos(): Promise<any> {
   return apiGet<any>('/api/pendientes-despacho-documentos');
 }
 
-// 5. NOTAS DE CRÉDITO — sin parámetros (sync_dependent.py)
-export async function fetchCreditNotes(): Promise<any> {
-  return apiGet<any>('/api/notas-credito');
+// 5. NOTAS DE CRÉDITO — ahora acepta rango de fechas (sync_dependent.py)
+export async function fetchCreditNotes(fechaInicio?: string, fechaFin?: string): Promise<any> {
+  const params = new URLSearchParams();
+  if (fechaInicio) params.append('fecha_inicio', fechaInicio);
+  if (fechaFin) params.append('fecha_fin', fechaFin);
+  const qs = params.toString();
+  return apiGet<any>(`/api/notas-credito${qs ? `?${qs}` : ''}`);
 }
 
 // Alias en español usado por CreditNotesView.tsx
-export async function fetchNotasCredito(): Promise<any> {
-  return fetchCreditNotes();
+export async function fetchNotasCredito(fechaInicio?: string, fechaFin?: string): Promise<any> {
+  return fetchCreditNotes(fechaInicio, fechaFin);
 }
 
 // 6. DETALLE FULFILLMENT
@@ -276,9 +285,13 @@ export async function fetchLogistica(
 }
 
 // Envíos individuales desde Envíame, usados en la tabla detallada de LogisticsView.tsx
-// (sin parámetros -- sync_dependent.py trae hasta 2000 registros más recientes)
-export async function fetchEnviameShipments(): Promise<any> {
-  return apiGet<any>('/api/enviame-shipments');
+export async function fetchEnviameShipments(
+  fechaInicio?: string, fechaFin?: string
+): Promise<any> {
+  const params = new URLSearchParams();
+  if (fechaInicio) params.append('fecha_inicio', fechaInicio);
+  if (fechaFin) params.append('fecha_fin', fechaFin);
+  return apiGet<any>(`/api/enviame-shipments?${params.toString()}`);
 }
 
 // 8. CRM LEADS (CLIENGO)
@@ -318,6 +331,58 @@ export async function fetchMarketingCampaigns(
   return apiGet<any>(`/api/marketing-campaigns?${params.toString()}`);
 }
 
+// 10b. ANUNCIOS INDIVIDUALES DE UNA CAMPAÑA (drill-down por campaña)
+export interface AnuncioCampana {
+  id: string;
+  adId: string;
+  anuncio: string;
+  imagenUrl: string;
+  imagen: string;
+  gastoCy: number;
+  clicsCy: number;
+  impresionesCy: number;
+  ctrCy: number;
+}
+
+export async function fetchMarketingCampaignAnuncios(
+  campana: string, fechaInicio?: string, fechaFin?: string, marca?: string
+): Promise<AnuncioCampana[]> {
+  const params = new URLSearchParams();
+  params.append('campana', campana);
+  if (fechaInicio) params.append('fecha_inicio', fechaInicio);
+  if (fechaFin) params.append('fecha_fin', fechaFin);
+  if (marca) params.append('marca', marca);
+  return apiGet<AnuncioCampana[]>(`/api/marketing-campaigns/anuncios?${params.toString()}`);
+}
+
+// 10c. TOP/BOTTOM ANUNCIOS DESTACADOS
+export interface AnuncioTop {
+  adId: string;
+  anuncio: string;
+  imagen: string;
+  gastoCy: number;
+  clicsCy: number;
+  impresionesCy: number;
+  ctrCy: number;
+  roasCy: number;
+}
+
+export async function fetchMarketingTopAnuncios(
+  fechaInicio?: string, fechaFin?: string, marca?: string, limite: number = 3
+): Promise<{ mejores: AnuncioTop[]; peores: AnuncioTop[] }> {
+  try {
+    const params = new URLSearchParams();
+    if (fechaInicio) params.append('fecha_inicio', fechaInicio);
+    if (fechaFin) params.append('fecha_fin', fechaFin);
+    if (marca) params.append('marca', marca);
+    params.append('limite', String(limite));
+    return await apiGet<{ mejores: AnuncioTop[]; peores: AnuncioTop[] }>(`/api/marketing-campaigns/top-anuncios?${params.toString()}`);
+  } catch (e) {
+    // Si el endpoint aún no está implementado en el backend, responde vacío sin romper
+    return { mejores: [], peores: [] };
+  }
+}
+
 // 11. INDICADORES D2C PERFORMANCE
 export async function fetchD2CPerformance(
   fechaInicio?: string, fechaFin?: string,
@@ -336,9 +401,7 @@ export async function fetchD2CPerformance(
   return apiGet<any>(`/api/indicadores-d2c?${params.toString()}`);
 }
 
-// 12. CANAL DISTRIBUIDORES (B2B) — distributors.py NO acepta parámetro "tipo":
-// el filtro a distribuidores (CANAL LIKE '%DISTRIBUIDOR%' / vendedores fijos)
-// está hardcodeado en el propio backend. Solo recibe fechas.
+// 12. CANAL DISTRIBUIDORES (B2B)
 export async function fetchDistributors(
   fechaInicio?: string, fechaFin?: string
 ): Promise<any> {
@@ -378,7 +441,7 @@ export async function fetchVentasTemperatura(
 // 15. CUMPLIMIENTO VENTAS
 export async function fetchCumplimiento(
   fechaInicio?: string, fechaFin?: string,
-  vendedores?: string[]
+  vendedores?: string[], categorias?: string[], canales?: string[], bodegas?: string[]
 ): Promise<any> {
   const params = new URLSearchParams();
   if (fechaInicio) params.append('fecha_inicio', fechaInicio);
@@ -386,11 +449,119 @@ export async function fetchCumplimiento(
   if (vendedores && vendedores.length > 0) {
     params.append('vendedores', vendedores.join(','));
   }
+  if (categorias && categorias.length > 0) {
+    params.append('categorias', categorias.join(','));
+  }
+  if (canales && canales.length > 0) {
+    params.append('canales', canales.join(','));
+  }
+  if (bodegas && bodegas.length > 0) {
+    params.append('bodegas', bodegas.join(','));
+  }
   return apiGet<any>(`/api/cumplimiento?${params.toString()}`);
 }
 
+// 15b. RECOMENDACIONES DE PRECIO & STOCK (YoY) — Cumplimiento Ventas
+export async function fetchRecomendacionesPrecioStock(
+  fechaInicio?: string, fechaFin?: string,
+  vendedores?: string[], categorias?: string[], canales?: string[], bodegas?: string[],
+  limite?: number
+): Promise<any> {
+  const params = new URLSearchParams();
+  if (fechaInicio) params.append('fecha_inicio', fechaInicio);
+  if (fechaFin) params.append('fecha_fin', fechaFin);
+  if (vendedores && vendedores.length > 0) {
+    params.append('vendedores', vendedores.join(','));
+  }
+  if (categorias && categorias.length > 0) {
+    params.append('categorias', categorias.join(','));
+  }
+  if (canales && canales.length > 0) {
+    params.append('canales', canales.join(','));
+  }
+  if (bodegas && bodegas.length > 0) {
+    params.append('bodegas', bodegas.join(','));
+  }
+  if (limite) params.append('limite', String(limite));
+  return apiGet<any>(`/api/cumplimiento/recomendaciones-precio-stock?${params.toString()}`);
+}
+
+// 15c. COMPARATIVO HISTÓRICO ANUAL — Cumplimiento Ventas
+export async function fetchHistoricoAnual(): Promise<{ anios: any[] }> {
+  return apiGet<{ anios: any[] }>('/api/cumplimiento/historico-anual');
+}
+
+// 15c-bis. TOP PRODUCTOS DEL PERÍODO ACTUAL — Cumplimiento Ventas
+export async function fetchProductosActual(
+  fechaInicio?: string, fechaFin?: string,
+  vendedores?: string[], categorias?: string[], canales?: string[], bodegas?: string[],
+  topN?: number
+): Promise<{ productos: any[] }> {
+  const params = new URLSearchParams();
+  if (fechaInicio) params.append('fecha_inicio', fechaInicio);
+  if (fechaFin) params.append('fecha_fin', fechaFin);
+  if (vendedores && vendedores.length > 0) params.append('vendedores', vendedores.join(','));
+  if (categorias && categorias.length > 0) params.append('categorias', categorias.join(','));
+  if (canales && canales.length > 0) params.append('canales', canales.join(','));
+  if (bodegas && bodegas.length > 0) params.append('bodegas', bodegas.join(','));
+  if (topN) params.append('top_n', String(topN));
+  return apiGet<{ productos: any[] }>(`/api/cumplimiento/productos-actual?${params.toString()}`);
+}
+
+// 15c-ter. DETALLE COMPLETO DE SKUs — Cumplimiento Ventas
+export async function fetchSkuDetalleCumplimiento(
+  fechaInicio?: string, fechaFin?: string,
+  vendedores?: string[], categorias?: string[], canales?: string[], bodegas?: string[]
+): Promise<{ skus: any[]; totalUnidades: number; totalVenta: number; totalContribucion: number }> {
+  const params = new URLSearchParams();
+  if (fechaInicio) params.append('fecha_inicio', fechaInicio);
+  if (fechaFin) params.append('fecha_fin', fechaFin);
+  if (vendedores && vendedores.length > 0) params.append('vendedores', vendedores.join(','));
+  if (categorias && categorias.length > 0) params.append('categorias', categorias.join(','));
+  if (canales && canales.length > 0) params.append('canales', canales.join(','));
+  if (bodegas && bodegas.length > 0) params.append('bodegas', bodegas.join(','));
+  return apiGet(`/api/cumplimiento/sku-detalle?${params.toString()}`);
+}
+
+// 15d. DATOS MANUALES
+export interface DatoManual {
+  periodo: string;
+  tipo: string;
+  marca: string;
+  monto: number;
+  notas?: string | null;
+  actualizado_por?: string | null;
+  actualizado_en?: string;
+}
+
+export interface TipoDatoManual {
+  tipo: string;
+  etiqueta: string;
+}
+
+export async function fetchTiposDatosManuales(): Promise<TipoDatoManual[]> {
+  return apiGet<TipoDatoManual[]>('/api/datos-manuales/tipos');
+}
+
+export async function fetchMarcasDatosManuales(): Promise<string[]> {
+  return apiGet<string[]>('/api/datos-manuales/marcas');
+}
+
+export async function fetchDatosManuales(): Promise<DatoManual[]> {
+  return apiGet<DatoManual[]>('/api/datos-manuales/metas');
+}
+
+export async function guardarDatoManual(dato: {
+  periodo: string; tipo: string; marca: string; monto: number; notas?: string; actualizado_por?: string;
+}): Promise<{ success: boolean; message: string }> {
+  return apiSend('/api/datos-manuales/metas', 'POST', dato);
+}
+
+export async function eliminarDatoManual(periodo: string, tipo: string, marca: string): Promise<{ success: boolean; message: string }> {
+  return apiSend('/api/datos-manuales/metas/eliminar', 'POST', { periodo, tipo, marca });
+}
+
 // 16. FILTROS GLOBALES
-// NOTA: filtros.py devuelve claves en español: {categorias, vendedores, bodegas}
 export async function fetchFiltrosGlobales(): Promise<any> {
   try {
     return await apiGet<any>('/api/filtros');
@@ -404,19 +575,11 @@ export async function fetchFiltrosGlobales(): Promise<any> {
 }
 
 // 17. AUDITORÍA KPI REVIEW
-// ⚠️ PENDIENTE DE CONFIRMAR: no hay router "/api/kpi-review" en los routers
-// vistos hasta ahora (channels, sku, tendencia, abandoned_carts, marketing,
-// leads, cumplimiento, fulfillment, distributors, temperatura_ventas,
-// sync_dependent, filtros, db_sync, sync_admin). Es probable que viva en
-// sync_dependent.py -- confirmar cuando se revise ese archivo.
 export async function fetchKpiReview(): Promise<any> {
   return apiGet<any>('/api/kpi-review');
 }
 
 // 18. DISPARADOR DE SINCRONIZACIÓN DE DATOS
-// sync_admin.py NO tiene POST /api/sync/run -- expone /api/sync/incremental
-// (ventas 30 días + stock + pendientes + notas de crédito + envíame) y
-// /api/sync/historico (con {dias} en el body, para carga histórica inicial).
 export async function runDataSync(): Promise<any> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
   const response = await fetch(`${baseUrl}/api/sync/incremental`, { method: 'POST' });
@@ -424,15 +587,18 @@ export async function runDataSync(): Promise<any> {
   return response.json();
 }
 
-// Consulta el progreso de una sincronización en curso (polling)
 export async function fetchSyncStatus(): Promise<any> {
   return apiGet<any>('/api/sync/status');
 }
 
 // 19. AUTENTICACIÓN Y GESTIÓN DE USUARIOS (RBAC)
-// Reemplaza la validación 100% client-side que vivía en UserContext.tsx
-// (con las contraseñas de todos los usuarios en texto plano en el bundle).
-// El backend valida contra un hash bcrypt y devuelve un token de sesión.
+export function resolveAvatarImageUrl(avatarImageUrl?: string | null): string | null {
+  if (!avatarImageUrl) return null;
+  if (/^https?:\/\//i.test(avatarImageUrl)) return avatarImageUrl;
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  return `${baseUrl}${avatarImageUrl.startsWith('/') ? '' : '/'}${avatarImageUrl}`;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -443,15 +609,6 @@ export interface AuthUser {
   avatarImageUrl: string | null;
   blockedModules: string[];
   allowedModulesOnly: string[] | null;
-}
-
-// La API guarda avatarImageUrl como ruta relativa (/static/avatars/xxx.jpg)
-// -- hay que anteponerle la base URL del backend para poder mostrarla en un <img>.
-export function resolveAvatarImageUrl(path: string | null | undefined): string | undefined {
-  if (!path) return undefined;
-  if (path.startsWith('http://') || path.startsWith('https://')) return path;
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-  return `${baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
 }
 
 export async function loginRequest(email: string, password: string): Promise<{ token: string; user: AuthUser }> {
@@ -472,20 +629,38 @@ export async function fetchUsers(): Promise<AuthUser[]> {
 
 export async function createUserRequest(user: {
   email: string; nombre: string; rol: string; password: string;
-  avatarColor?: string; avatarIcon?: string | null;
-  blockedModules?: string[]; allowedModulesOnly?: string[];
+  avatarColor?: string; avatarIcon?: string; blockedModules?: string[]; allowedModulesOnly?: string[];
 }): Promise<AuthUser> {
   return apiSend('/api/auth/users', 'POST', user);
 }
 
 export async function updateUserRequest(userId: string, changes: {
-  nombre?: string; rol?: string; avatarColor?: string;
-  // '' (string vacío) le pide al backend borrar el ícono y volver a solo
-  // iniciales -- undefined/omitido significa "no tocar este campo".
-  avatarIcon?: string;
+  nombre?: string; rol?: string; avatarColor?: string; avatarIcon?: string;
   blockedModules?: string[]; allowedModulesOnly?: string[];
 }): Promise<AuthUser> {
   return apiSend(`/api/auth/users/${userId}`, 'PATCH', changes);
+}
+
+export async function uploadAvatarImageRequest(userId: string, file: File): Promise<AuthUser> {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(`${baseUrl}/api/auth/users/${userId}/avatar-image`, {
+    method: 'POST',
+    headers: { ...authHeaders() },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const msg = await parseErrorMessage(response, `Error al subir la imagen (${response.status}).`);
+    throw new Error(msg);
+  }
+  return response.json();
+}
+
+export async function removeAvatarImageRequest(userId: string): Promise<AuthUser> {
+  return apiSend(`/api/auth/users/${userId}/avatar-image`, 'DELETE');
 }
 
 export async function resetPasswordRequest(userId: string, newPassword: string): Promise<void> {
@@ -500,41 +675,7 @@ export async function impersonateRequest(targetUserId: string): Promise<{ token:
   return apiSend('/api/auth/impersonate', 'POST', { targetUserId });
 }
 
-// Subir/quitar foto propia de avatar -- multipart, no puede usar apiSend
-// (ese fuerza Content-Type: application/json).
-export async function uploadAvatarImageRequest(userId: string, file: File): Promise<AuthUser> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-  const formData = new FormData();
-  formData.append('file', file);
-  const response = await fetch(`${baseUrl}/api/auth/users/${userId}/avatar-image`, {
-    method: 'POST',
-    headers: { ...authHeaders() },
-    body: formData,
-  });
-  if (!response.ok) {
-    const msg = await parseErrorMessage(response, `Error al subir la imagen (${response.status})`);
-    throw new Error(msg);
-  }
-  return response.json();
-}
-
-export async function removeAvatarImageRequest(userId: string): Promise<AuthUser> {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-  const response = await fetch(`${baseUrl}/api/auth/users/${userId}/avatar-image`, {
-    method: 'DELETE',
-    headers: { ...authHeaders() },
-  });
-  if (!response.ok) {
-    const msg = await parseErrorMessage(response, `Error al quitar la imagen (${response.status})`);
-    throw new Error(msg);
-  }
-  return response.json();
-}
-
-// 20. ALERTA DE CATEGORÍA FALTANTE
-// SKUs que se vendieron pero no tienen categoría real asignada -- ver
-// routers/categorias.py. Asignar una categoría acá no recalcula ventas
-// pasadas al instante: se aplica en la próxima sincronización.
+// 20. ALERTA DE CATEGORÍA FALTANTE (SKUs)
 export interface SkuPendienteCategoria {
   sku: string;
   producto: string;
@@ -554,8 +695,7 @@ export async function asignarCategoriaSku(sku: string, categoria: string): Promi
   return apiSend('/api/categorias/asignar', 'POST', { sku, categoria });
 }
 
-// 21. ALERTA DE CATEGORÍA FALTANTE -- CAMPAÑAS (usa el mismo catálogo
-// de categorías que la alerta de SKUs, fetchCategoriasCatalogo)
+// 21. ALERTA DE CATEGORÍA FALTANTE (CAMPAÑAS)
 export interface CampanaPendienteCategoria {
   campana: string;
   plataforma: string;
@@ -572,8 +712,6 @@ export async function asignarCategoriaCampana(campana: string, plataforma: strin
 }
 
 // 22. EXPORTAR EXCEL CONSOLIDADO DE VENTAS
-// Distinto al resto: el backend devuelve un archivo binario (StreamingResponse),
-// no JSON -- hay que pedirlo como blob y disparar la descarga manualmente.
 export async function downloadVentasExcel(
   fechaInicio?: string, fechaFin?: string,
   canal?: string | null, categoria?: string | null
@@ -593,9 +731,6 @@ export async function downloadVentasExcel(
     throw new Error(msg);
   }
 
-  // Por si el backend devolvió un error 200 con JSON en vez del archivo
-  // (el endpoint atrapa excepciones y responde {"error": "..."} con
-  // status 200 en vez de un código de error real).
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
     const data = await response.json();
@@ -605,7 +740,6 @@ export async function downloadVentasExcel(
   const blob = await response.blob();
   const objectUrl = window.URL.createObjectURL(blob);
 
-  // Nombre de archivo desde el header Content-Disposition si viene, si no un default.
   const disposition = response.headers.get('content-disposition') || '';
   const match = disposition.match(/filename="?([^"]+)"?/);
   const filename = match ? match[1] : `Ventas_Consolidadas_Kaltemp.xlsx`;
@@ -617,4 +751,37 @@ export async function downloadVentasExcel(
   link.click();
   link.remove();
   window.URL.revokeObjectURL(objectUrl);
+}
+
+// RESUMEN EJECUTIVO -- acepta rango de fechas opcional
+export async function fetchResumen(fechaInicio?: string, fechaFin?: string): Promise<Record<string, any>> {
+  const params = new URLSearchParams();
+  if (fechaInicio) params.append('fecha_inicio', fechaInicio);
+  if (fechaFin) params.append('fecha_fin', fechaFin);
+  const qs = params.toString();
+  return apiGet<Record<string, any>>(`/api/resumen${qs ? `?${qs}` : ''}`);
+}
+
+// 23. ALERTA DE PESO/MEDIDAS FALTANTE (Control Logístico)
+export interface SkuPendientePeso {
+  sku: string;
+  producto: string;
+  ventaTotal: number;
+  lineas: number;
+}
+
+export interface AsignarPesoPayload {
+  pesoKg?: number;
+  largoCm?: number;
+  anchoCm?: number;
+  altoCm?: number;
+  descontinuado: boolean;
+}
+
+export async function fetchPesoPendientes(): Promise<{ total: number; items: SkuPendientePeso[] }> {
+  return apiGet('/api/peso-productos/pendientes');
+}
+
+export async function asignarPesoSku(sku: string, payload: AsignarPesoPayload): Promise<{ success: boolean; message: string }> {
+  return apiSend('/api/peso-productos/asignar', 'POST', { sku, ...payload });
 }

@@ -1,3 +1,15 @@
+# ============================================================
+# ARCHIVO: sync_temperaturas.py
+# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\sync\sync_temperaturas.py
+# (Agrega soporte para 'dias_atras' -- el campo de días del motor
+#  ahora controla también esta tabla. Respaldar: Copy-Item sync_temperaturas.py sync_temperaturas.py.bak)
+# ============================================================
+
+# ============================================================
+# Archivo: sync_temperaturas.py
+# Ruta:    backend/sync/sync_temperaturas.py
+# ============================================================
+
 """
 sync/sync_temperaturas.py — Descarga las temperaturas históricas reales de
 Santiago de Chile desde Open-Meteo (API Gratuita) y puebla la tabla `temperaturas`
@@ -16,6 +28,12 @@ load_dotenv(os.path.join(_AQUI, "..", "..", ".env"), override=True)
 load_dotenv(os.path.join(_AQUI, "..", ".env"), override=True)
 
 DB_FILE = os.getenv("DUCKDB_PATH", os.path.join(_AQUI, "..", "kaltemp_matrix.duckdb"))
+
+# Fecha desde la cual se descarga el histórico de clima -- configurable vía
+# TEMP_FECHA_DESDE en el .env (09-ago-2026: default extendido a 2023-01-01
+# para que el módulo "Ventas Vs Temperatura" tenga suficiente profundidad
+# histórica para comparaciones YoY, igual que el resto de los módulos).
+TEMP_FECHA_DESDE = os.getenv("TEMP_FECHA_DESDE", "2023-01-01")
 
 # Coordenadas de Santiago de Chile
 LATITUD = "-33.45"
@@ -63,9 +81,11 @@ def descargar_clima_santiago(f_inicio_str, f_fin_str):
     return []
 
 
-def sync_temperaturas():
+def sync_temperaturas(dias_atras: int = None):
+    """dias_atras (opcional): sobreescribe TEMP_FECHA_DESDE para esta
+    corrida -- agregado 11-ago-2026."""
     hoy = date.today()
-    fecha_inicio_str = "2021-01-01"
+    fecha_inicio_str = (hoy - timedelta(days=dias_atras)).strftime("%Y-%m-%d") if dias_atras else TEMP_FECHA_DESDE
     fecha_fin_str = hoy.strftime("%Y-%m-%d")
 
     print(f"[{datetime.now()}] 🌡️ Descargando clima de Santiago desde {fecha_inicio_str} hasta {fecha_fin_str}...")
@@ -82,7 +102,16 @@ def sync_temperaturas():
                 TEMP_PROM DOUBLE
             )
         """)
-        con.execute("DELETE FROM temperaturas")
+        # CORREGIDO (12-ago-2026): mismo bug que se encontró en
+        # sync_leads.py -- antes este DELETE no tenía condición, así que
+        # pedir una ventana chica (ej. dias_atras=7) borraba TODO el
+        # histórico de temperaturas y dejaba solo esos 7 días. Ahora
+        # solo se borra el rango [fecha_inicio_str, fecha_fin_str] que
+        # realmente se volvió a descargar.
+        con.execute(
+            "DELETE FROM temperaturas WHERE CAST(FECHA AS DATE) BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)",
+            [fecha_inicio_str, fecha_fin_str]
+        )
         con.executemany(
             "INSERT OR REPLACE INTO temperaturas (FECHA, TEMP_MAX, TEMP_MIN, TEMP_PROM) VALUES (?, ?, ?, ?)",
             filas

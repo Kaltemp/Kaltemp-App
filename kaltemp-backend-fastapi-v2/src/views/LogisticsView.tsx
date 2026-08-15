@@ -1,16 +1,24 @@
+// GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\components\LogisticsView.tsx (o la carpeta donde ya vive hoy)
+// Cambios 12-ago-2026 (segunda ronda del día):
+// - Reaplicado fetchEnviameShipments(startDate, endDate) -- este archivo
+//   subido no tenía el fix de la ronda anterior.
+// - Columna "Fecha Envío" agregada (usa fechaEnvio, ya viene del backend).
+// - Columna "Rastreo" eliminada a pedido de William.
+// - "Fecha Entrega" queda pendiente hasta confirmar con Envíame si el
+//   dato existe (ver diagnostico_fecha_entrega_enviame.py) -- no se
+//   agrega una columna con datos inventados mientras tanto.
 import React, { useState, useEffect, useMemo } from 'react';
-import { ThemeMode } from '../types';
+import { ThemeMode, BrandMode} from '../types';
+import { getBrandTokens } from '../theme/brandTokens';
 import { 
   Send, 
   DollarSign, 
   Truck, 
   TrendingUp, 
   RefreshCw, 
-  ExternalLink,
   Search,
   CheckCircle2,
   Clock,
-  ArrowUpRight,
   ShieldCheck,
   Filter
 } from 'lucide-react';
@@ -19,10 +27,12 @@ import { fetchLogistica, fetchEnviameShipments } from '../services/api';
 
 interface Props {
   theme: ThemeMode;
+  brandMode: BrandMode;
 }
 
-export const LogisticsView: React.FC<Props> = ({ theme }) => {
+export const LogisticsView: React.FC<Props> = ({ theme, brandMode }) => {
   const isDark = theme === 'dark';
+  const brandTokens = getBrandTokens(brandMode, isDark);
   const { startDate, endDate } = useGlobalFilter();
 
   const [kpis, setKpis] = useState<any>(null);
@@ -35,7 +45,7 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
     setLoading(true);
     Promise.all([
       fetchLogistica(startDate, endDate),
-      fetchEnviameShipments()
+      fetchEnviameShipments(startDate, endDate)
     ])
       .then(([resKpis, resShipments]) => {
         setKpis(resKpis);
@@ -47,11 +57,18 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
 
   const formatCLP = (val: number) => `$${Math.round(val).toLocaleString('es-CL')}`;
 
-  // Métricas KPI
-  const totalEnvios = kpis?.totalEnvios ?? shipments.length ?? 0;
-  const costoEnviame = kpis?.costoEnviameTotal ?? 89289;
-  const cobroBsale = kpis?.cobroBsaleTotal ?? 98880;
-  const diferenciaFlete = cobroBsale - costoEnviame;
+  // Métricas KPI -- LEE LOS NOMBRES REALES que manda /api/logistica
+  // (despachosCy, costoEnviameCy, cobroBsaleCy, diferencia). Antes se leía
+  // kpis?.totalEnvios / costoEnviameTotal / cobroBsaleTotal -- ninguno de
+  // esos campos existe en la respuesta real, así que SIEMPRE caía en los
+  // valores hardcodeados de ejemplo (89289 / 98880), nunca mostraba datos
+  // reales -- confirmado real 11-ago-2026 comparando contra el Response
+  // real del endpoint (665 despachos, $3.443.223 costo, $3.440.054 cobro,
+  // -$3.169 de margen -- muy distinto del +$9.591 falso que se veía).
+  const totalEnvios = kpis?.despachosCy ?? shipments.length ?? 0;
+  const costoEnviame = kpis?.costoEnviameCy ?? 0;
+  const cobroBsale = kpis?.cobroBsaleCy ?? 0;
+  const diferenciaFlete = kpis?.diferencia ?? (cobroBsale - costoEnviame);
 
   // Filtrado reactivo en tiempo real
   const filteredShipments = useMemo(() => {
@@ -92,36 +109,6 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300 pb-10">
-      
-      {/* HEADER PRINCIPAL */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className={`p-2.5 rounded-xl ${isDark ? 'bg-blue-500/15 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
-              <Send className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-                Control Logístico & Envíame
-              </h1>
-              <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-2">
-                <span className="inline-flex items-center gap-1 text-emerald-500 font-semibold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Live Sync
-                </span>
-                • Auditoría de Costos Courier vs Cobro Cliente Bsale
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className={`text-xs px-3 py-1.5 rounded-full font-medium border ${
-            isDark ? 'bg-[#1C1C1E] border-[#2C2C2E] text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-600'
-          }`}>
-            Periodo Activo: <strong className="text-slate-900 dark:text-white font-semibold">{startDate} - {endDate}</strong>
-          </span>
-        </div>
-      </div>
 
       {/* KPI CARDS APPLE HIG STYLE */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -140,7 +127,7 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
               <Truck className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-extrabold text-slate-900 dark:text-white mt-3 tracking-tight">
+          <div className={`text-3xl font-extrabold mt-3 tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
             {totalEnvios} <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">envíos</span>
           </div>
           <span className="text-xs block mt-1.5 text-slate-500 dark:text-slate-400 font-medium">
@@ -162,7 +149,7 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
               <DollarSign className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-extrabold text-slate-900 dark:text-white mt-3 tracking-tight">
+          <div className={`text-3xl font-extrabold mt-3 tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
             {formatCLP(costoEnviame)}
           </div>
           <span className="text-xs block mt-1.5 text-slate-500 dark:text-slate-400 font-medium">
@@ -281,17 +268,18 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
                 <th className="py-3 px-4">COMUNA</th>
                 <th className="py-3 px-4">VENDEDOR</th>
                 <th className="py-3 px-4">PRODUCTO</th>
+                <th className="py-3 px-4">FECHA ENVÍO</th>
+                <th className="py-3 px-4">FECHA ENTREGA</th>
                 <th className="py-3 px-4 text-center">ESTADO ENVÍO</th>
                 <th className="py-3 px-4 text-right text-emerald-500 font-bold">COBRO BSALE</th>
                 <th className="py-3 px-4 text-right text-amber-500 font-bold">COSTO ENVÍAME</th>
                 <th className="py-3 px-4 text-right font-bold">MARGEN FLETE</th>
-                <th className="py-3 px-4 text-center">RASTREO</th>
               </tr>
             </thead>
             <tbody className={`divide-y ${isDark ? 'divide-[#2C2C2E]' : 'divide-slate-100'}`}>
               {filteredShipments.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400 italic">
+                  <td colSpan={11} className="py-12 text-center text-slate-400 italic">
                     No se encontraron envíos que coincidan con el filtro
                   </td>
                 </tr>
@@ -334,6 +322,21 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
                         {s.producto || '—'}
                       </td>
 
+                      {/* Fecha Envío */}
+                      <td className="py-3 px-4 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">
+                        {s.fechaEnvio
+                          ? new Date(s.fechaEnvio).toLocaleDateString('es-CL')
+                          : '—'}
+                      </td>
+
+                      {/* Fecha Entrega -- solo existe si el envío ya está
+                          efectivamente entregado (viene NULL si no) */}
+                      <td className="py-3 px-4 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">
+                        {s.fechaEntrega
+                          ? new Date(s.fechaEntrega).toLocaleDateString('es-CL')
+                          : '—'}
+                      </td>
+
                       {/* Estado Envío Badge */}
                       <td className="py-3 px-4 text-center">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${
@@ -361,22 +364,6 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
                         dif >= 0 ? 'text-emerald-500' : 'text-rose-500'
                       }`}>
                         {dif >= 0 ? `+${formatCLP(dif)}` : formatCLP(dif)}
-                      </td>
-
-                      {/* Link de Rastreo */}
-                      <td className="py-3 px-4 text-center whitespace-nowrap">
-                        {s.trackingUrl ? (
-                          <a 
-                            href={s.trackingUrl} 
-                            target="_blank" 
-                            rel="noopener noreferrer" 
-                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-500 hover:text-blue-600 hover:bg-blue-500/10 px-2.5 py-1 rounded-lg transition-all"
-                          >
-                            Rastrear <ArrowUpRight className="w-3 h-3" />
-                          </a>
-                        ) : (
-                          <span className="text-slate-400 dark:text-slate-600">—</span>
-                        )}
                       </td>
                     </tr>
                   );

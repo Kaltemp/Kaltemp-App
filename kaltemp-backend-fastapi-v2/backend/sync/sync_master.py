@@ -16,12 +16,16 @@ from sync_ventas import sync_ventas  # noqa: E402
 from sync_leads import sync_leads  # noqa: E402
 from sync_abandoned_carts import sync_abandoned_carts  # noqa: E402
 from sync_marketing import sync_marketing  # noqa: E402
+from sync_ga4_kaltemp import sync_ga4_kaltemp  # noqa: E402
+from sync_ga4_tompalmer import sync_ga4_tompalmer  # noqa: E402
 from sync_stock_bsale import sync_stock  # noqa: E402
 from sync_pendientes_documentos import sync_pendientes_documentos  # noqa: E402
 from sync_notas_credito import sync_notas_credito  # noqa: E402
 from sync_falabella_estados import sync_falabella_estados  # noqa: E402
 from sync_enviame import sync_enviame  # noqa: E402
 from actualizar_fletes_enviame import ejecutar_actualizacion_costos  # noqa: E402
+from sync_planilla_despachos import sync_planilla_despachos  # noqa: E402
+from sync_cruce_enviame_bsale import sync_cruce_enviame_bsale  # noqa: E402
 
 PASOS = [
     ("temperaturas", sync_temperaturas),
@@ -30,12 +34,16 @@ PASOS = [
     ("leads", sync_leads),
     ("abandoned_checkouts", sync_abandoned_carts),
     ("marketing", sync_marketing),
+    ("ga4_kaltemp", sync_ga4_kaltemp),
+    ("ga4_tompalmer", sync_ga4_tompalmer),
     ("stock_bsale", sync_stock),
     ("pendientes_despacho_docs", sync_pendientes_documentos),
     ("notas_credito_desfase", sync_notas_credito),
     ("falabella_estados_pedido", sync_falabella_estados),
     ("enviame_despachos", sync_enviame),
     ("enviame_despachos.COSTO_ENVIO", ejecutar_actualizacion_costos),
+    ("planilla_despachos", sync_planilla_despachos),
+    ("enviame_cruce_ventas", sync_cruce_enviame_bsale),
 ]
 
 

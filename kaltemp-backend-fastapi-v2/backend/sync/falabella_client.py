@@ -1,3 +1,11 @@
+# ============================================================
+# ARCHIVO: falabella_client.py
+# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\sync\falabella_client.py
+# (Fix: ya no se cae con 'executemany requires a non-empty list' si
+#  hay 0 pedidos, y ahora muestra el error real de la API de Falabella
+#  en vez de fallar en silencio. Respalda: Copy-Item falabella_client.py falabella_client.py.bak)
+# ============================================================
+
 """
 falabella_client.py — Cliente para Falabella Seller Center API.
 
@@ -81,8 +89,12 @@ def get_orders(fecha_inicio, fecha_fin) -> list[dict]:
 
         resp = requests.get(FALABELLA_URL, params=params, timeout=20)
         if resp.status_code != 200:
+            print(f"⚠️ GetOrders Falabella devolvió {resp.status_code} (offset={offset}): {resp.text[:400]}")
             break
         data = resp.json()
+        if "SuccessResponse" not in data and "ErrorResponse" in data:
+            print(f"⚠️ GetOrders Falabella respondió con ErrorResponse (200 OK pero error de negocio): {data.get('ErrorResponse')}")
+            break
         orders = data.get("SuccessResponse", {}).get("Body", {}).get("Orders", {}).get("Order", [])
         if isinstance(orders, dict):
             orders = [orders]
@@ -108,6 +120,7 @@ def get_order_items(order_id) -> list[dict]:
 
     resp = requests.get(FALABELLA_URL, params=params, timeout=20)
     if resp.status_code != 200:
+        print(f"⚠️ GetOrderItems Falabella devolvió {resp.status_code} (order_id={order_id}): {resp.text[:300]}")
         return []
     data = resp.json()
     items = data.get("SuccessResponse", {}).get("Body", {}).get("OrderItems", {}).get("OrderItem", [])

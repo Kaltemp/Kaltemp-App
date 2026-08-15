@@ -123,6 +123,10 @@ def _por_producto_canal(con, fecha_inicio: date, fecha_fin: date) -> dict:
     (PRODUCTO, CANAL) -> {unidades, venta}. Misma tabla `ventas` real, sin
     inventar columnas: se usa CANTIDAD (unidades) y BRUTO_TOTAL (venta),
     exactamente igual a como ya se usan en el resto de la app.
+
+    DESPACHO (07-ago-2026): se excluye ES_GLOSA_SERVICIO -- esta es una
+    tabla "por producto", así que una línea de despacho no debe poder
+    aparecer como si fuera un producto vendido.
     """
     placeholders = ", ".join(["?"] * len(_ORIGENES_FULL))
     sql = f"""
@@ -131,6 +135,7 @@ def _por_producto_canal(con, fecha_inicio: date, fecha_fin: date) -> dict:
         WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ?
           AND ORIGEN IN ({placeholders})
           AND PRODUCTO IS NOT NULL AND TRIM(PRODUCTO) != ''
+          AND NOT ES_GLOSA_SERVICIO
         GROUP BY PRODUCTO, CANAL
     """
     filas = con.execute(sql, [fecha_inicio, fecha_fin, *_ORIGENES_FULL]).fetchall()

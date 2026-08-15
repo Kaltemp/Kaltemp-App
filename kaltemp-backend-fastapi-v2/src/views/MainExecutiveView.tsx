@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { KPICard } from '../components/KPICard';
-import { ThemeMode } from '../types';
+import { ThemeMode, BrandMode} from '../types';
+import { getBrandTokens } from '../theme/brandTokens';
 import { ChannelSale } from '../types';
 import { fetchChannels, fetchTendenciaMensual, fetchAcumuladoYtd } from '../services/api';
 import { useGlobalFilter, ALL_REPS, ALL_CATEGORIES, ALL_CHANNELS } from '../context/FilterContext';
@@ -19,6 +20,7 @@ import {
 
 interface Props {
   theme: ThemeMode;
+  brandMode: BrandMode;
 }
 
 const CustomMonthlyTooltip = ({ active, payload, label, theme }: any) => {
@@ -52,23 +54,65 @@ const CustomMonthlyTooltip = ({ active, payload, label, theme }: any) => {
           </span>
           <span className="font-bold text-slate-700 dark:text-slate-300">${(data.ly || 0).toFixed(1)} M</span>
         </div>
-        <div className="flex items-center justify-between gap-3 pt-1.5 border-t border-slate-200 dark:border-[#2C2C2E]">
-          <span className={`flex items-center gap-1.5 font-bold ${yoyText}`}>
-            <span className="w-2.5 h-2.5 rounded-full bg-[#30D158]" />
-            VAR YoY%:
-          </span>
-          <span className={`font-black ${yoyText}`}>
-            +{data.yoy || 0}%
-          </span>
-        </div>
+        {data.cy > 0 && data.yoy !== null && data.yoy !== undefined && (
+          <div className="flex items-center justify-between gap-3 pt-1.5 border-t border-slate-200 dark:border-[#2C2C2E]">
+            <span className={`flex items-center gap-1.5 font-bold ${yoyText}`}>
+              <span className="w-2.5 h-2.5 rounded-full bg-[#30D158]" />
+              VAR YoY%:
+            </span>
+            <span className={`font-black ${yoyText}`}>
+              {data.yoy >= 0 ? '+' : ''}{data.yoy}%
+            </span>
+          </div>
+        )}
       </div>
     );
   }
   return null;
 };
 
-export const MainExecutiveView: React.FC<Props> = ({ theme }) => {
+// Componente inteligente para posicionar las etiquetas de la línea verde
+const CustomLineLabel = (props: any) => {
+  const { x, y, index, data, theme } = props;
+  const item = (data && data[index]) ? data[index] : (props.payload || {});
+
+  // Si no hay año actual o cy <= 0 (meses futuros), NO mostrar etiqueta
+  if (!item || !item.cy || item.cy <= 0) {
+    return null;
+  }
+
+  const yoyVal = item.yoy;
+  if (yoyVal === undefined || yoyVal === null) return null;
+
+  const isPositive = yoyVal >= 0;
   const isDark = theme === 'dark';
+
+  const fillColor = isPositive
+    ? (isDark ? '#30D158' : '#15803D')
+    : (isDark ? '#FF453A' : '#DC2626');
+
+  const textLabel = `${isPositive ? '+' : ''}${Number(yoyVal).toFixed(1)}%`;
+
+  // Si el punto del pico está muy pegado arriba (y < 22), se dibuja justo debajo del punto
+  const labelY = y < 22 ? y + 18 : y - 10;
+
+  return (
+    <text
+      x={x}
+      y={labelY}
+      fill={fillColor}
+      textAnchor="middle"
+      fontSize={12}
+      fontWeight="900"
+    >
+      {textLabel}
+    </text>
+  );
+};
+
+export const MainExecutiveView: React.FC<Props> = ({ theme, brandMode }) => {
+  const isDark = theme === 'dark';
+  const brandTokens = getBrandTokens(brandMode, isDark);
   const {
     selectedChannels,
     matchesChannel,
@@ -115,6 +159,16 @@ export const MainExecutiveView: React.FC<Props> = ({ theme }) => {
     JSON.stringify(canalesParaBackend),
   ]);
 
+  const processedMonthsData = useMemo(() => {
+    return (MONTHS_DATA || []).map((m) => {
+      const hasCy = m && typeof m.cy === 'number' && m.cy > 0;
+      return {
+        ...m,
+        yoy: hasCy ? m.yoy : null
+      };
+    });
+  }, [MONTHS_DATA]);
+
   const rawChannelsList = useMemo(() => (Array.isArray(CHANNELS_DATA_RAW) ? CHANNELS_DATA_RAW : []), [CHANNELS_DATA_RAW]);
 
   const CHANNELS_DATA = useMemo(
@@ -145,7 +199,6 @@ export const MainExecutiveView: React.FC<Props> = ({ theme }) => {
   const totalMargen = totalNeto ? (totalContri / totalNeto) * 100 : 0;
   const totalTkp = totalTxs ? totalBruto / totalTxs : 0;
 
-  // Porcentajes de variación total (DEFINIDOS EXPLÍCITAMENTE)
   const totalWowPct = totalWow ? ((totalBruto - totalWow) / totalWow) * 100 : 0;
   const totalYoyPct = totalYoy ? ((totalBruto - totalYoy) / totalYoy) * 100 : 0;
   const total2YoyPct = total2Yoy ? ((totalBruto - total2Yoy) / total2Yoy) * 100 : 0;
@@ -221,7 +274,7 @@ export const MainExecutiveView: React.FC<Props> = ({ theme }) => {
         <KPICard
           title="VENTA TOTAL (BRUTO)"
           mainValue={formatM(totalBruto)}
-          colorValue={isDark ? '#38BDF8' : '#0055D6'}
+          colorValue={brandTokens.accent}
           sparklineSvg={sparkVenta}
           theme={theme}
           rows={[
@@ -240,7 +293,7 @@ export const MainExecutiveView: React.FC<Props> = ({ theme }) => {
           rows={[
             { label: 'WOW', value: formatM(totalContriWow), current: totalContri, target: totalContriWow },
             { label: 'YOY', value: formatM(totalContriYoy), current: totalContri, target: totalContriYoy },
-            { label: '2YOY', value: formatM(totalContri2Yoy), current: totalContri, target: totalContri2Yoy }
+            { label: '2YOY', value: formatM(totalContri2Yoy), current: totalContri2Yoy, target: totalContri2Yoy }
           ]}
         />
 
@@ -282,7 +335,7 @@ export const MainExecutiveView: React.FC<Props> = ({ theme }) => {
           </span>
         </div>
 
-        <table className="w-full text-left text-xs border-collapse min-w-[900px]">
+        <table className="w-full text-left text-xs border-collapse min-w-[1200px]">
           <thead>
             <tr className={`border-b text-[11px] font-black uppercase tracking-wider ${tableHeaderClass}`}>
               <SortableTh label="CANAL" sortKey="canal" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} />
@@ -291,8 +344,11 @@ export const MainExecutiveView: React.FC<Props> = ({ theme }) => {
               <SortableTh label="TOTAL" sortKey="totalBruto" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" className={isDark ? 'text-blue-400 font-black' : 'text-blue-700 font-black'} />
               <SortableTh label="CONTRIBUCIÓN" sortKey="contribucion" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
               <SortableTh label="TKP" sortKey="tkp" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
+              <SortableTh label="WOW $" sortKey="wow" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" className="opacity-70" />
               <SortableTh label="WOW %" sortKey="wowPct" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
+              <SortableTh label="YOY $" sortKey="yoy" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" className="opacity-70" />
               <SortableTh label="YOY %" sortKey="yoyPct" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
+              <SortableTh label="2YOY $" sortKey="twoYoy" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" className="opacity-70" />
               <SortableTh label="2YOY %" sortKey="twoYoyPct" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
               <SortableTh label="MARGEN %" sortKey="margenFrontal" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
               <SortableTh label="SHARE %" sortKey="share" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} align="right" />
@@ -301,7 +357,7 @@ export const MainExecutiveView: React.FC<Props> = ({ theme }) => {
           <tbody className="divide-y divide-slate-200 dark:divide-[#2C2C2E] font-medium">
             {sortedChannels.length === 0 ? (
               <tr>
-                <td colSpan={11} className="p-4 text-center text-slate-400 italic">
+                <td colSpan={14} className="p-4 text-center text-slate-400 italic">
                   Sin datos de canales para esta selección
                 </td>
               </tr>
@@ -333,12 +389,15 @@ export const MainExecutiveView: React.FC<Props> = ({ theme }) => {
                     <td className={`p-2.5 text-right font-black ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>{formatM(ch.totalBruto)}</td>
                     <td className="p-2.5 text-right">{formatM(ch.contribucion)}</td>
                     <td className="p-2.5 text-right">${Math.round(ch.tkp || 0).toLocaleString('es-CL')}</td>
+                    <td className="p-2.5 text-right opacity-70">{formatM(ch.wow || 0)}</td>
                     <td className={`p-2.5 text-right font-black ${wowPct >= 0 ? (isDark ? 'text-emerald-400' : 'text-emerald-700') : (isDark ? 'text-red-400' : 'text-red-700')}`}>
                       {wowPct >= 0 ? '+' : ''}{wowPct.toFixed(1)}%
                     </td>
+                    <td className="p-2.5 text-right opacity-70">{formatM(ch.yoy || 0)}</td>
                     <td className={`p-2.5 text-right font-black ${yoyPct >= 0 ? (isDark ? 'text-emerald-400' : 'text-emerald-700') : (isDark ? 'text-red-400' : 'text-red-700')}`}>
                       {yoyPct >= 0 ? '+' : ''}{yoyPct.toFixed(1)}%
                     </td>
+                    <td className="p-2.5 text-right opacity-70">{formatM(ch.twoYoy || 0)}</td>
                     <td className={`p-2.5 text-right font-black ${twoYoyPct >= 0 ? (isDark ? 'text-emerald-400' : 'text-emerald-700') : (isDark ? 'text-red-400' : 'text-red-700')}`}>
                       {twoYoyPct >= 0 ? '+' : ''}{twoYoyPct.toFixed(1)}%
                     </td>
@@ -379,9 +438,18 @@ export const MainExecutiveView: React.FC<Props> = ({ theme }) => {
               <td className={`p-2.5 text-right ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>{formatM(totalBruto)}</td>
               <td className="p-2.5 text-right">{formatM(totalContri)}</td>
               <td className="p-2.5 text-right">${Math.round(totalTkp).toLocaleString('es-CL')}</td>
-              <td className={`p-2.5 text-right ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>+{totalWowPct.toFixed(1)}%</td>
-              <td className={`p-2.5 text-right ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>+{totalYoyPct.toFixed(1)}%</td>
-              <td className={`p-2.5 text-right ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>+{total2YoyPct.toFixed(1)}%</td>
+              <td className="p-2.5 text-right opacity-70">{formatM(totalWow)}</td>
+              <td className={`p-2.5 text-right ${totalWowPct >= 0 ? (isDark ? 'text-emerald-400' : 'text-emerald-700') : (isDark ? 'text-red-400' : 'text-red-700')}`}>
+                {totalWowPct >= 0 ? '+' : ''}{totalWowPct.toFixed(1)}%
+              </td>
+              <td className="p-2.5 text-right opacity-70">{formatM(totalYoy)}</td>
+              <td className={`p-2.5 text-right ${totalYoyPct >= 0 ? (isDark ? 'text-emerald-400' : 'text-emerald-700') : (isDark ? 'text-red-400' : 'text-red-700')}`}>
+                {totalYoyPct >= 0 ? '+' : ''}{totalYoyPct.toFixed(1)}%
+              </td>
+              <td className="p-2.5 text-right opacity-70">{formatM(total2Yoy)}</td>
+              <td className={`p-2.5 text-right ${total2YoyPct >= 0 ? (isDark ? 'text-emerald-400' : 'text-emerald-700') : (isDark ? 'text-red-400' : 'text-red-700')}`}>
+                {total2YoyPct >= 0 ? '+' : ''}{total2YoyPct.toFixed(1)}%
+              </td>
               <td className={`p-2.5 text-right ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>{totalMargen.toFixed(1)}%</td>
               <td className="p-2.5 text-right">100.0%</td>
             </tr>
@@ -406,23 +474,32 @@ export const MainExecutiveView: React.FC<Props> = ({ theme }) => {
 
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={MONTHS_DATA}>
+              <ComposedChart data={processedMonthsData} margin={{ top: 28, right: 15, left: 15, bottom: 5 }}>
                 <XAxis dataKey="month" stroke={isDark ? '#8E8E93' : '#64748b'} fontSize={11} tickLine={false} />
                 <YAxis yAxisId="left" hide />
-                <YAxis yAxisId="right" hide />
+                <YAxis yAxisId="right" hide domain={['dataMin - 15', 'dataMax + 25']} />
                 <Tooltip content={<CustomMonthlyTooltip theme={theme} />} />
                 <Bar yAxisId="left" dataKey="ly" name="Año Anterior" fill={isDark ? '#2C2C2E' : '#cbd5e1'} radius={[4, 4, 0, 0]} />
-                <Bar yAxisId="left" dataKey="cy" name="Año Actual" fill="#0A84FF" radius={[4, 4, 0, 0]}>
+                <Bar yAxisId="left" dataKey="cy" name="Año Actual" fill="#0A84FF" radius={[4, 4, 0, 0]} />
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="yoy"
+                  name="VAR YoY%"
+                  stroke="#30D158"
+                  strokeWidth={2.5}
+                  connectNulls={false}
+                  dot={(dotProps: any) => {
+                    const { cx, cy, payload } = dotProps;
+                    if (!payload || !payload.cy || payload.cy <= 0) return <React.Fragment key={dotProps.index} />;
+                    return <circle key={dotProps.index} cx={cx} cy={cy} r={4.5} fill="#30D158" />;
+                  }}
+                >
                   <LabelList
-                    dataKey="cy"
-                    position="top"
-                    formatter={(val: number) => (val ? `$${val.toFixed(1)}M` : '')}
-                    fill={isDark ? '#EDEDED' : '#1e293b'}
-                    fontSize={10}
-                    fontWeight="bold"
+                    dataKey="yoy"
+                    content={<CustomLineLabel theme={theme} data={processedMonthsData} />}
                   />
-                </Bar>
-                <Line yAxisId="right" type="monotone" dataKey="yoy" name="VAR YoY%" stroke="#30D158" strokeWidth={2.5} dot={{ r: 4 }} />
+                </Line>
               </ComposedChart>
             </ResponsiveContainer>
           </div>

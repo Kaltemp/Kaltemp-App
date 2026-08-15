@@ -1,3 +1,4 @@
+# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\sync\sync_notas_credito.py
 """
 sync_notas_credito.py — Puebla `notas_credito_desfase` en kaltemp_matrix.duckdb.
 
@@ -102,7 +103,7 @@ import os
 import re
 import sys
 import duckdb
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 from bsale_client import bsale_get_all, bsale_get_one  # noqa: E402
@@ -194,9 +195,26 @@ def _resolver_documento_referencia(ref_doc: dict | None, mapa_codesii_doctype: d
     return f"{tipo} N° {numero}"
 
 
-def sync_notas_credito():
-    fecha_desde_dt = datetime.strptime(FECHA_DESDE_STR, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    print(f"[{datetime.now()}] Ventana: desde {FECHA_DESDE_STR} (NC_FECHA_DESDE)")
+def sync_notas_credito(dias_atras: int = None, progress_callback=None):
+    """
+    dias_atras (agregado 11-ago-2026, para conectar el campo de 'días'
+    del modal de sync a este paso): si se pasa, la ventana se calcula
+    como hoy menos esos días, con prioridad sobre NC_FECHA_DESDE. Antes
+    esta función no aceptaba ningún parámetro -- el mecanismo genérico
+    de sync_admin.py ya intentaba pasarle dias_atras, pero como la firma
+    no lo aceptaba, caía en silencio al fallback sin días (usando
+    siempre el default fijo del .env). progress_callback no se usa acá
+    todavía (el bucle de este script no reporta progreso incremental),
+    se acepta solo para no romper si sync_admin.py lo pasa.
+    """
+    if dias_atras is not None:
+        fecha_desde_dt = (datetime.now(timezone.utc) - timedelta(days=dias_atras)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        print(f"[{datetime.now()}] Ventana: últimos {dias_atras} días (desde {fecha_desde_dt.date()})")
+    else:
+        fecha_desde_dt = datetime.strptime(FECHA_DESDE_STR, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        print(f"[{datetime.now()}] Ventana: desde {FECHA_DESDE_STR} (NC_FECHA_DESDE)")
 
     print(f"[{datetime.now()}] Cargando mapa document_type -> codeSii (respaldo)...")
     mapa_codesii_doctype = _mapa_codesii_por_document_type_id()
@@ -319,18 +337,35 @@ def sync_notas_credito():
 
     con = duckdb.connect(DB_PATH, read_only=False)
     try:
-        # DROP + CREATE en vez de CREATE IF NOT EXISTS: cambia el esquema
-        # (columna DOCUMENTO_REFERENCIA nueva), así que una tabla vieja de
-        # una corrida anterior no calzaría con el INSERT de abajo.
-        con.execute("DROP TABLE IF EXISTS notas_credito_desfase")
+        # FIX (15-ago-2026, a pedido de William -- ver auditoría del chat):
+        # antes esto era DROP TABLE + CREATE, así que una corrida con
+        # dias_atras chico (ej. 5 días para un reproceso puntual) BORRABA
+        # TODO el historial de notas de crédito y lo reemplazaba solo por
+        # lo que se acababa de descargar (5 días). Ahora: la tabla se crea
+        # una sola vez con el esquema completo (incluye DOCUMENTO_REFERENCIA),
+        # y cada corrida solo borra + reinserta la VENTANA de fechas que se
+        # está re-sincronizando -- mismo patrón ya usado en sync_leads.py.
+        # Si una tabla de una corrida MUY vieja (antes del 11-ago-2026) no
+        # tiene la columna DOCUMENTO_REFERENCIA, se migra una sola vez acá
+        # sin perder las filas existentes.
         con.execute("""
-            CREATE TABLE notas_credito_desfase (
+            CREATE TABLE IF NOT EXISTS notas_credito_desfase (
                 DOCUMENTO VARCHAR, DOCUMENTO_REFERENCIA VARCHAR, CLIENTE VARCHAR,
                 VENDEDOR VARCHAR, DESCRIPCION_PRODUCTO VARCHAR,
                 FECHA_EMISION TIMESTAMP, FECHA_CAIDA TIMESTAMP, GENERACION_DATE TIMESTAMP,
                 DIAS_DESFASE INTEGER, MONTO DOUBLE, ALERTA BOOLEAN
             )
         """)
+        cols_existentes = {r[0].upper() for r in con.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'notas_credito_desfase'"
+        ).fetchall()}
+        if "DOCUMENTO_REFERENCIA" not in cols_existentes:
+            con.execute("ALTER TABLE notas_credito_desfase ADD COLUMN DOCUMENTO_REFERENCIA VARCHAR")
+
+        con.execute(
+            "DELETE FROM notas_credito_desfase WHERE CAST(FECHA_EMISION AS DATE) >= CAST(? AS DATE)",
+            [fecha_desde_dt.date()],
+        )
         con.executemany(
             """INSERT INTO notas_credito_desfase
                (DOCUMENTO, DOCUMENTO_REFERENCIA, CLIENTE, VENDEDOR, DESCRIPCION_PRODUCTO,

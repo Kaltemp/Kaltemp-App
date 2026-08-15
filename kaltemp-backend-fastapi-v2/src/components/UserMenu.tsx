@@ -1,5 +1,10 @@
+// ============================================================
+// ARCHIVO: UserMenu.tsx
+// RUTA: C:\kaltemp_app\kaltemp-backend-fastapi-v2\src\components\UserMenu.tsx
+// ============================================================
+
 import React, { useState } from 'react';
-import { ChevronDown, UserCheck, Shield, LogOut } from 'lucide-react';
+import { ChevronDown, UserCheck, Shield } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { AvatarBadge } from './AvatarBadge';
 import { UserManagementModal } from './UserManagementModal';
@@ -10,17 +15,12 @@ interface UserMenuProps {
 
 /**
  * Bloque de usuario (avatar + nombre + rol), con:
- *  - Dropdown para "Simular Sesión" de otro usuario (solo William, mismo
- *    comportamiento que tenía en Sidebar.tsx).
- *  - Botón para cerrar sesión.
+ *  - Dropdown para "Simular Sesión" de otro usuario (solo William).
  *  - Acceso al modal "Gestión de Usuarios y Roles (RBAC)".
- *
- * Trasladado de Sidebar.tsx al Header.tsx (07-ago-2026) -- es autocontenido
- * (usa useUser() directamente) para poder vivir en cualquiera de los dos
- * sin pasar props extra por App.tsx.
+ *  (El botón de cerrar sesión reside permanentemente en el Sidebar).
  */
 export const UserMenu: React.FC<UserMenuProps> = ({ isDark }) => {
-  const { currentUser, users, impersonate, logout } = useUser();
+  const { currentUser, users, impersonate } = useUser();
   const [showDropdown, setShowDropdown] = useState(false);
   const [showModal, setShowModal] = useState(false);
 
@@ -33,8 +33,6 @@ export const UserMenu: React.FC<UserMenuProps> = ({ isDark }) => {
       await impersonate(usrId);
       setShowDropdown(false);
     } catch (err) {
-      // Silencioso a propósito: si falla, el usuario simplemente sigue en
-      // su sesión actual -- no hay nada roto que mostrar en pantalla.
       console.error('No se pudo simular la sesión:', err);
     }
   };
@@ -68,22 +66,9 @@ export const UserMenu: React.FC<UserMenuProps> = ({ isDark }) => {
             size="sm"
           />
         </button>
-
-        <button
-          onClick={logout}
-          className={`p-1.5 rounded-lg border transition-all shrink-0 cursor-pointer ${
-            isDark
-              ? 'bg-[#1C1C1E] border-[#2C2C2E] text-slate-400 hover:text-red-400 hover:border-red-500/30'
-              : 'bg-slate-100 border-slate-200 text-slate-500 hover:text-red-600 hover:border-red-200'
-          }`}
-          title="Cerrar sesión"
-        >
-          <LogOut className="w-3.5 h-3.5" />
-        </button>
       </div>
 
-      {/* Dropdown Menu de Cambio de Usuario (Solo William) -- se abre hacia
-          abajo y alineado a la derecha porque ahora vive en el Header. */}
+      {/* Dropdown Menu de Cambio de Usuario (Solo William) */}
       {isWilliam && showDropdown && (
         <div
           className={`absolute right-0 top-full mt-2 w-64 rounded-2xl border shadow-2xl overflow-hidden z-40 p-1.5 ${

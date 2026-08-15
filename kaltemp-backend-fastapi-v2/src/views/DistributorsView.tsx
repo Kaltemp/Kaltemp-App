@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { ThemeMode } from '../types';
+import { ThemeMode, BrandMode} from '../types';
+import { getBrandTokens } from '../theme/brandTokens';
 import { Building2, DollarSign, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
 import { useGlobalFilter } from '../context/FilterContext';
 import { fetchDistributors } from '../services/api';
@@ -17,10 +18,12 @@ import {
 
 interface Props {
   theme: ThemeMode;
+  brandMode: BrandMode;
 }
 
-export const DistributorsView: React.FC<Props> = ({ theme }) => {
+export const DistributorsView: React.FC<Props> = ({ theme, brandMode }) => {
   const isDark = theme === 'dark';
+  const brandTokens = getBrandTokens(brandMode, isDark);
   const { startDate, endDate } = useGlobalFilter();
 
   const [selectedCategoria, setSelectedCategoria] = useState<string | null>(null);
@@ -166,8 +169,8 @@ export const DistributorsView: React.FC<Props> = ({ theme }) => {
 
       {/* Encabezado */}
       <div className="flex items-center justify-between">
-        <h1 className={"text-2xl font-black tracking-tight flex items-center gap-2.5 " + titleBlue}>
-          <Building2 className="w-7 h-7 text-blue-600 dark:text-blue-400" /> Canal Distribuidores B2B
+        <h1 className="text-2xl font-black tracking-tight flex items-center gap-2.5" style={{ color: brandTokens.accent }}>
+          <Building2 className="w-7 h-7" style={{ color: brandTokens.accent }} /> Canal Distribuidores B2B
         </h1>
       </div>
 

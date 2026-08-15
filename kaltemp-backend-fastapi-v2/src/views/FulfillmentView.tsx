@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ThemeMode } from '../types';
+import { ThemeMode, BrandMode} from '../types';
+import { getBrandTokens } from '../theme/brandTokens';
 import { Truck, Store, Layers, RefreshCw, ArrowUpRight, CheckCircle2 } from 'lucide-react';
 import { useGlobalFilter } from '../context/FilterContext';
 import { fetchFulfillment, fetchFulfillmentPorProducto } from '../services/api';
@@ -8,6 +9,7 @@ import { SortableTh } from '../components/SortableTh';
 
 interface Props {
   theme: ThemeMode;
+  brandMode: BrandMode;
 }
 
 const COLORES_CANAL = ['#30D158', '#FF9F0A', '#0A84FF', '#5E5CE6', '#FF375F', '#64D2FF'];
@@ -18,8 +20,9 @@ const fmtVar = (cy: number, prev: number) => {
   return ((cy - prev) / prev) * 100;
 };
 
-export const FulfillmentView: React.FC<Props> = ({ theme }) => {
+export const FulfillmentView: React.FC<Props> = ({ theme, brandMode }) => {
   const isDark = theme === 'dark';
+  const brandTokens = getBrandTokens(brandMode, isDark);
   const { startDate, endDate } = useGlobalFilter();
 
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
@@ -123,8 +126,8 @@ export const FulfillmentView: React.FC<Props> = ({ theme }) => {
 
       {/* Encabezado */}
       <div className="flex items-center justify-between">
-        <h1 className={"text-2xl font-black tracking-tight flex items-center gap-2.5 " + titleBlue}>
-          <Truck className="w-7 h-7 text-blue-600 dark:text-blue-400" /> Detalle Fulfillment
+        <h1 className="text-2xl font-black tracking-tight flex items-center gap-2.5" style={{ color: brandTokens.accent }}>
+          <Truck className="w-7 h-7" style={{ color: brandTokens.accent }} /> Detalle Fulfillment
         </h1>
       </div>
 

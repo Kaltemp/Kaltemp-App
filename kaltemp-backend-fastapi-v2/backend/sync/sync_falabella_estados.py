@@ -1,3 +1,4 @@
+# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\sync\sync_falabella_estados.py
 """
 sync_falabella_estados.py — Puebla `falabella_estados_pedido` en
 kaltemp_matrix.duckdb: el Status real por línea de cada pedido Falabella
@@ -21,7 +22,7 @@ Uso:
 import os
 import sys
 import duckdb
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 from falabella_client import get_orders, get_order_items, estado_legible  # noqa: E402
@@ -30,8 +31,18 @@ DB_PATH = os.getenv("DUCKDB_PATH", "kaltemp_matrix.duckdb")
 FECHA_DESDE_STR = os.getenv("FALABELLA_FECHA_DESDE", "2026-01-01")
 
 
-def sync_falabella_estados():
-    fecha_desde = datetime.strptime(FECHA_DESDE_STR, "%Y-%m-%d").date()
+def sync_falabella_estados(dias_atras: int = None, progress_callback=None):
+    """
+    dias_atras (agregado 11-ago-2026, mismo motivo que en
+    sync_notas_credito.py): si se pasa, la ventana se calcula como hoy
+    menos esos días, con prioridad sobre FALABELLA_FECHA_DESDE.
+    progress_callback se acepta solo para no romper si sync_admin.py lo
+    pasa (este script no reporta progreso incremental todavía).
+    """
+    if dias_atras is not None:
+        fecha_desde = (datetime.now() - timedelta(days=dias_atras)).date()
+    else:
+        fecha_desde = datetime.strptime(FECHA_DESDE_STR, "%Y-%m-%d").date()
     fecha_hasta = datetime.now().date()
     print(f"[{datetime.now()}] Consultando GetOrders Falabella: {fecha_desde} a {fecha_hasta}...")
 

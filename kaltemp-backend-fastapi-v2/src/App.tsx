@@ -1,5 +1,11 @@
+// ============================================================
+// ARCHIVO: App.tsx
+// GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\src\App.tsx
+// (Respaldar el archivo actual antes de reemplazar: Copy-Item App.tsx App.tsx.bak)
+// ============================================================
+
 import React, { useState, useEffect } from 'react';
-import { ModuleId, ThemeMode } from './types';
+import { ModuleId, ThemeMode, BrandMode } from './types';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { KpiReviewModal } from './components/KpiReviewModal';
@@ -10,6 +16,7 @@ import { useUser } from './context/UserContext';
 import { useGlobalFilter } from './context/FilterContext';
 
 import { MainExecutiveView } from './views/MainExecutiveView';
+import { ResumenView } from './views/ResumenView';
 import { SkuSalesView } from './views/SkuSalesView';
 import { StockView } from './views/StockView';
 import { PendingDispatchView } from './views/PendingDispatchView';
@@ -27,6 +34,13 @@ import { SalesTargetCumplimientoView } from './views/SalesTargetCumplimientoView
 
 export default function App() {
   const [theme, setTheme] = useState<ThemeMode>('light');
+  // Selector global de modo de marca (Standard/Kaltemp/Tom Palmer) --
+  // ver theme/brandTokens.ts para la paleta y las reglas de excepción.
+  // Persistido igual que 'theme' para que se recuerde entre sesiones.
+  const [brandMode, setBrandMode] = useState<BrandMode>(() => {
+    const guardado = localStorage.getItem('kaltemp_brand_mode');
+    return guardado === 'kaltemp' || guardado === 'tompalmer' ? guardado : 'standard';
+  });
   const [activeModule, setActiveModule] = useState<ModuleId>('principal');
   const { startDate, setStartDate, endDate, setEndDate } = useGlobalFilter();
   const [selectedCategory, setSelectedCategory] = useState<string>('Todas');
@@ -42,6 +56,11 @@ export default function App() {
 
   const handleThemeToggle = () => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
+  const handleBrandModeChange = (mode: BrandMode) => {
+    setBrandMode(mode);
+    localStorage.setItem('kaltemp_brand_mode', mode);
   };
 
   useEffect(() => {
@@ -65,20 +84,25 @@ export default function App() {
     }
 
     switch (activeModule) {
-      case 'principal': return <MainExecutiveView theme={theme} />;
-      case 'ventas_sku': return <SkuSalesView theme={theme} selectedCategory={selectedCategory} onCategoryChange={setSelectedCategory} />;
-      case 'stock': return <StockView theme={theme} />;
-      case 'pendientes_despacho': return <PendingDispatchView theme={theme} />;
-      case 'notas_credito': return <CreditNotesView theme={theme} />;
-      case 'fulfillment': return <FulfillmentView theme={theme} />;
-      case 'control_logistico': return <LogisticsView theme={theme} />;
-      case 'leads': return <LeadsView theme={theme} />;
-      case 'carros_abandonados': return <AbandonedCartsView theme={theme} />;
+      case 'resumen': return <ResumenView theme={theme} onSelectModule={setActiveModule} />;
+      case 'principal': return <MainExecutiveView theme={theme} brandMode={brandMode} />;
+      case 'ventas_sku': return <SkuSalesView theme={theme} brandMode={brandMode} selectedCategory={selectedCategory} onCategoryChange={setSelectedCategory} />;
+      case 'stock': return <StockView theme={theme} brandMode={brandMode} />;
+      case 'pendientes_despacho': return <PendingDispatchView theme={theme} brandMode={brandMode} />;
+      case 'notas_credito': return <CreditNotesView theme={theme} brandMode={brandMode} />;
+      case 'fulfillment': return <FulfillmentView theme={theme} brandMode={brandMode} />;
+      case 'control_logistico': return <LogisticsView theme={theme} brandMode={brandMode} />;
+      case 'leads': return <LeadsView theme={theme} brandMode={brandMode} />;
+      case 'carros_abandonados': return <AbandonedCartsView theme={theme} brandMode={brandMode} />;
+      // indicadores_d2c y campanas_mkt NO reciben brandMode a propósito --
+      // resuelven su propio modo de marca a partir de su selector interno
+      // (ver D2CPerformanceView.tsx / MarketingCampaignsView.tsx), ignorando
+      // el selector global. Ver theme/brandTokens.ts para la regla completa.
       case 'indicadores_d2c': return <D2CPerformanceView theme={theme} />;
       case 'campanas_mkt': return <MarketingCampaignsView theme={theme} />;
-      case 'distribuidores': return <DistributorsView theme={theme} />;
-      case 'inmobiliaria': return <RealEstateView theme={theme} />;
-      case 'ventas_temperatura': return <TemperatureSalesView theme={theme} />;
+      case 'distribuidores': return <DistributorsView theme={theme} brandMode={brandMode} />;
+      case 'inmobiliaria': return <RealEstateView theme={theme} brandMode={brandMode} />;
+      case 'ventas_temperatura': return <TemperatureSalesView theme={theme} brandMode={brandMode} />;
       case 'cumplimiento_ventas': return <SalesTargetCumplimientoView theme={theme} />;
       default: return <MainExecutiveView theme={theme} />;
     }
@@ -119,6 +143,8 @@ export default function App() {
           onSelectModule={setActiveModule}
           theme={theme}
           onThemeToggle={handleThemeToggle}
+          brandMode={brandMode}
+          onBrandModeChange={handleBrandModeChange}
           startDate={startDate}
           endDate={endDate}
           onStartDateChange={setStartDate}

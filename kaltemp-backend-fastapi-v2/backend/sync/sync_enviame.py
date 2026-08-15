@@ -1,3 +1,9 @@
+# ============================================================
+# ARCHIVO: sync_enviame.py
+# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\sync\sync_enviame.py
+# (Respaldar el archivo actual antes de reemplazar: Copy-Item sync_enviame.py sync_enviame.py.bak)
+# ============================================================
+
 """
 sync/sync_enviame.py — Sincroniza los envíos de Envíame (API s2/v2) hacia
 la tabla `enviame_despachos` en kaltemp_matrix.duckdb.
@@ -40,14 +46,20 @@ HEADERS = {"api-key": API_KEY, "Accept": "application/json"}
 DB_FILE = os.getenv("DUCKDB_PATH", os.path.join(_AQUI, "..", "kaltemp_matrix.duckdb"))
 
 
-def sync_enviame(progress_callback=None):
+def sync_enviame(progress_callback=None, dias_atras: int = None):
     def report(pct, msg):
         if progress_callback:
             progress_callback(pct, msg)
         print(f"[{pct}%] {msg}")
 
+    # ENVIAME_DIAS_ATRAS (env var, default 60) -- antes estaba hardcodeado
+    # a 60 días sin forma de pedir más histórico. El parámetro dias_atras
+    # (si se pasa explícito, ej. desde el motor de Carga Histórica) tiene
+    # prioridad sobre el env var. 10-ago-2026.
+    if dias_atras is None:
+        dias_atras = int(os.getenv("ENVIAME_DIAS_ATRAS", "60"))
     hoy = datetime.date.today()
-    fecha_inicio_str = (hoy - datetime.timedelta(days=60)).strftime("%Y-%m-%d")
+    fecha_inicio_str = (hoy - datetime.timedelta(days=dias_atras)).strftime("%Y-%m-%d")
 
     report(2, f"🚚 Conectando con API de Envíame (desde {fecha_inicio_str})...")
 
@@ -119,6 +131,16 @@ def sync_enviame(progress_callback=None):
         es_entregado = 1 if any(k in code_upper or k in status_upper for k in
                                  ("DELIVERED", "ENTREGADO", "COMPLETED")) else 0
 
+        # FECHA_ENTREGA (12-ago-2026): confirmado con diagnostico_fecha_entrega_enviame.py
+        # que status.created_at es la fecha en que el envío pasó al estado
+        # ACTUAL -- cuando ese estado es "Entregado" (code DELIVERED_DOM u
+        # otro que matchee es_entregado), status.created_at ES la fecha real
+        # de entrega (ej. caso real: identifier 458800459, status "Entregado"
+        # con created_at "2026-08-12 13:00:00"). Si el envío todavía NO está
+        # entregado, ese campo describe otro estado (en tránsito, etc.), así
+        # que NO se guarda -- queda NULL hasta que sí esté entregado.
+        fecha_entrega = status_obj.get("created_at") if es_entregado else None
+
         rows.append({
             "N_ENVIO_REF": e.get("imported_id") or e.get("n_packages_reference") or e.get("import_reference") or "",
             "ESTADO": status_name,
@@ -135,6 +157,7 @@ def sync_enviame(progress_callback=None):
             "COURIER": carrier_name or "Por asignar",
             "SERVICIO": e.get("service") or "Estándar",
             "FECHA_CREACION": e.get("created_at"),
+            "FECHA_ENTREGA": fecha_entrega,
             "COSTO_ENVIO": 0.0,
             "TRACKING_URL": tracking_web,
             "ID_INTERNO": str(e.get("identifier") or ""),
@@ -151,10 +174,16 @@ def sync_enviame(progress_callback=None):
                 N_ENVIO_REF VARCHAR, ESTADO VARCHAR, ESTADO_CODE VARCHAR, ES_INCIDENCIA INTEGER,
                 ES_ENTREGADO INTEGER, TRACKING_NUMBER VARCHAR, BODEGA VARCHAR, CLIENTE VARCHAR,
                 TELEFONO VARCHAR, EMAIL VARCHAR, COMUNA VARCHAR, DIRECCION VARCHAR, COURIER VARCHAR,
-                SERVICIO VARCHAR, FECHA_CREACION VARCHAR, COSTO_ENVIO DOUBLE, TRACKING_URL VARCHAR,
-                ID_INTERNO VARCHAR
+                SERVICIO VARCHAR, FECHA_CREACION VARCHAR, FECHA_ENTREGA VARCHAR, COSTO_ENVIO DOUBLE,
+                TRACKING_URL VARCHAR, ID_INTERNO VARCHAR
             )
         """)
+        # FIX (12-ago-2026): FECHA_ENTREGA es columna nueva -- si la tabla
+        # ya existía de una corrida anterior (sin esta columna), el CREATE
+        # TABLE IF NOT EXISTS de arriba no la agrega solo. Este ALTER TABLE
+        # defensivo sí la agrega sin tocar ninguna fila existente (quedan
+        # con FECHA_ENTREGA = NULL hasta que se vuelvan a sincronizar).
+        con.execute("ALTER TABLE enviame_despachos ADD COLUMN IF NOT EXISTS FECHA_ENTREGA VARCHAR")
         con.execute("CREATE SEQUENCE IF NOT EXISTS seq_enviame_pk START 1")
 
         con.execute(
@@ -164,8 +193,16 @@ def sync_enviame(progress_callback=None):
 
         con.register("df_enviame_tmp", df_enviame)
         con.execute("""
-            INSERT INTO enviame_despachos
-            SELECT nextval('seq_enviame_pk') AS ID_ENVIO_PK, * FROM df_enviame_tmp
+            INSERT INTO enviame_despachos (
+                ID_ENVIO_PK, N_ENVIO_REF, ESTADO, ESTADO_CODE, ES_INCIDENCIA, ES_ENTREGADO,
+                TRACKING_NUMBER, BODEGA, CLIENTE, TELEFONO, EMAIL, COMUNA, DIRECCION, COURIER,
+                SERVICIO, FECHA_CREACION, FECHA_ENTREGA, COSTO_ENVIO, TRACKING_URL, ID_INTERNO
+            )
+            SELECT
+                nextval('seq_enviame_pk'), N_ENVIO_REF, ESTADO, ESTADO_CODE, ES_INCIDENCIA, ES_ENTREGADO,
+                TRACKING_NUMBER, BODEGA, CLIENTE, TELEFONO, EMAIL, COMUNA, DIRECCION, COURIER,
+                SERVICIO, FECHA_CREACION, FECHA_ENTREGA, COSTO_ENVIO, TRACKING_URL, ID_INTERNO
+            FROM df_enviame_tmp
         """)
 
     report(100, f"✨ Sincronización completa: {len(df_enviame)} envíos ({fecha_inicio_str} → hoy).")

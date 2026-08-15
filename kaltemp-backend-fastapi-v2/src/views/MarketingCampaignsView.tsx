@@ -1,5 +1,7 @@
+// GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\src\views\MarketingCampaignsView.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeMode } from '../types';
+import { getBrandTokens } from '../theme/brandTokens';
 import { 
   Megaphone, 
   Layers, 
@@ -13,12 +15,14 @@ import {
   Target,
   Sparkles,
   RefreshCw,
-  BarChart3
+  ChevronDown,
+  ChevronRight,
+  Loader2
 } from 'lucide-react';
 import { useGlobalFilter } from '../context/FilterContext';
 import { CrossFilterBanner } from '../components/CrossFilterBanner';
 import { SortableTh } from '../components/SortableTh';
-import { fetchMarketingCampaigns } from '../services/api';
+import { fetchMarketingCampaigns, fetchDatosManuales, DatoManual, fetchMarketingCampaignAnuncios, AnuncioCampana } from '../services/api';
 import {
   BarChart,
   Bar,
@@ -28,7 +32,11 @@ import {
   ComposedChart,
   Line,
   CartesianGrid,
-  LabelList
+  Legend,
+  LabelList,
+  AreaChart,
+  Area,
+  YAxis
 } from 'recharts';
 
 interface Props {
@@ -45,10 +53,38 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
   const [platformFilter, setPlatformFilter] = useState<string>('ALL');
   const [marcaFilter, setMarcaFilter] = useState<string>('ALL');
 
+  // EXCEPCIÓN (ver theme/brandTokens.ts): Marketing nunca recibe el
+  // selector global de modo de marca -- resuelve el suyo propio a
+  // partir de marcaFilter. 'ALL' (Todas las Marcas) cae en 'standard'
+  // porque ahí sí conviven ambas marcas a la vez en la misma vista.
+  const brandTokens = getBrandTokens(
+    marcaFilter === 'Kaltemp' ? 'kaltemp' : marcaFilter === 'Tom Palmer' ? 'tompalmer' : 'standard',
+    isDark
+  );
+
   const [previewAd, setPreviewAd] = useState<{ name: string; url: string; platform: string } | null>(null);
+
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [anunciosPorCampana, setAnunciosPorCampana] = useState<Record<string, AnuncioCampana[]>>({});
+  const [loadingAnunciosKey, setLoadingAnunciosKey] = useState<string | null>(null);
+  const [previewAnuncio, setPreviewAnuncio] = useState<{ name: string; url: string } | null>(null);
 
   const [CAMPAIGNS_DATA, setCampaignsData] = useState<any[]>([]);
   const [loadingCampaigns, setLoadingCampaigns] = useState(true);
+  const [datosManuales, setDatosManuales] = useState<DatoManual[]>([]);
+
+  // Tendencia Semanal (Semanas 1 a 52)
+  const [weeklyTrendData, setWeeklyTrendData] = useState<any[]>([]);
+  const [loadingWeekly, setLoadingWeekly] = useState<boolean>(true);
+
+  useEffect(() => {
+    fetchDatosManuales()
+      .then((data) => setDatosManuales(Array.isArray(data) ? data : []))
+      .catch((err) => {
+        console.error('Error al cargar presupuesto de marketing:', err);
+        setDatosManuales([]);
+      });
+  }, []);
 
   useEffect(() => {
     setLoadingCampaigns(true);
@@ -61,12 +97,56 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
       .finally(() => setLoadingCampaigns(false));
   }, [startDate, endDate, marcaFilter]);
 
+  // Carga tendencia semanal de inversión
+  useEffect(() => {
+    setLoadingWeekly(true);
+    const marcaQuery = marcaFilter === 'ALL' ? '' : `?marca=${encodeURIComponent(marcaFilter)}`;
+    fetch(`/api/marketing/weekly-trend${marcaQuery}`)
+      .then((res) => res.json())
+      .then((data) => setWeeklyTrendData(Array.isArray(data) ? data : []))
+      .catch((err) => {
+        console.error('Error al cargar tendencia semanal de inversión:', err);
+        setWeeklyTrendData([]);
+      })
+      .finally(() => setLoadingWeekly(false));
+  }, [marcaFilter]);
+
   const handleSort = (key: string) => {
     if (sortKey === key) {
       setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
     } else {
       setSortKey(key);
       setSortDir('desc');
+    }
+  };
+
+  const handleToggleExpand = (c: any) => {
+    const plataforma = getPlataforma(c);
+    const isGoogle = plataforma.toLowerCase().includes('google');
+    if (isGoogle) return;
+
+    const nombreCampana = getCampanaName(c);
+    const marcaCampana = c.marca || 'Kaltemp';
+    const key = `${plataforma}__${nombreCampana}__${marcaCampana}`;
+
+    if (expandedKey === key) {
+      setExpandedKey(null);
+      return;
+    }
+
+    setExpandedKey(key);
+
+    if (!anunciosPorCampana[key]) {
+      setLoadingAnunciosKey(key);
+      fetchMarketingCampaignAnuncios(nombreCampana, startDate, endDate, marcaCampana)
+        .then((anuncios) => {
+          setAnunciosPorCampana((prev) => ({ ...prev, [key]: Array.isArray(anuncios) ? anuncios : [] }));
+        })
+        .catch((err) => {
+          console.error('Error al cargar anuncios de la campaña:', err);
+          setAnunciosPorCampana((prev) => ({ ...prev, [key]: [] }));
+        })
+        .finally(() => setLoadingAnunciosKey(null));
     }
   };
 
@@ -78,8 +158,7 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
   const getCtr = (c: any) => c.ctrCy ?? c.ctr ?? (getImpresiones(c) > 0 ? (getClics(c) / getImpresiones(c)) * 100 : 0);
   const getRoas = (c: any) => c.roasCy ?? c.roas ?? 0;
 
-  // Formateador sin decimales para pesos ($)
-  const fmtMoney = (val: number) => `$${Math.round(val).toLocaleString('es-CL', { maximumFractionDigits: 0 })}`;
+  const fmtMoney = (val: number) => `$${Math.round(val || 0).toLocaleString('es-CL', { maximumFractionDigits: 0 })}`;
 
   const filteredCampaigns = useMemo(() => {
     let list = CAMPAIGNS_DATA;
@@ -159,6 +238,40 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
 
   const gastoVarYoyPct = totalGastoYoy ? ((totalGasto - totalGastoYoy) / totalGastoYoy) * 100 : 0;
   const gastoVarWowPct = totalGastoWow ? ((totalGasto - totalGastoWow) / totalGastoWow) * 100 : 0;
+
+  const pptoMarketing = useMemo(() => {
+    if (!startDate || !endDate) return 0;
+
+    const [anioIni, mesIni, diaIni] = startDate.split('-').map(Number);
+    const [anioFin, mesFin, diaFin] = endDate.split('-').map(Number);
+    if (!anioIni || !mesIni || !diaIni || !anioFin || !mesFin || !diaFin) return 0;
+
+    const rangoInicio = new Date(anioIni, mesIni - 1, diaIni);
+    const rangoFin = new Date(anioFin, mesFin - 1, diaFin);
+
+    return datosManuales
+      .filter((d) => d.tipo === 'presupuesto_marketing')
+      .filter((d) => /^\d{4}-\d{2}$/.test(d.periodo))
+      .filter((d) => marcaFilter === 'ALL' || d.marca === marcaFilter)
+      .reduce((acc, d) => {
+        const [anioP, mesP] = d.periodo.split('-').map(Number);
+        const mesInicioDate = new Date(anioP, mesP - 1, 1);
+        const mesFinDate = new Date(anioP, mesP, 0);
+        const diasDelMes = mesFinDate.getDate();
+
+        const solapInicio = mesInicioDate > rangoInicio ? mesInicioDate : rangoInicio;
+        const solapFin = mesFinDate < rangoFin ? mesFinDate : rangoFin;
+        if (solapInicio > solapFin) return acc;
+
+        const diasSolapados = Math.round((solapFin.getTime() - solapInicio.getTime()) / 86400000) + 1;
+        const proporcion = diasSolapados / diasDelMes;
+
+        return acc + (d.monto || 0) * proporcion;
+      }, 0);
+  }, [datosManuales, startDate, endDate, marcaFilter]);
+
+  const gastoVarPptoPct = pptoMarketing ? ((totalGasto - pptoMarketing) / pptoMarketing) * 100 : 0;
+
   const impVarYoyPct = totalImpresionesYoy ? ((totalImpresiones - totalImpresionesYoy) / totalImpresionesYoy) * 100 : 0;
   const impVarWowPct = totalImpresionesWow ? ((totalImpresiones - totalImpresionesWow) / totalImpresionesWow) * 100 : 0;
   const clicsVarYoyPct = totalClicsYoy ? ((totalClics - totalClicsYoy) / totalClicsYoy) * 100 : 0;
@@ -201,16 +314,6 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
       share: ((metaSpendActual / totalSpendActual) * 100).toFixed(1),
       yoyShare: ((metaSpendYoy / totalSpendYoy) * 100).toFixed(1)
     }
-  ];
-
-  const monthlyTrendData = [
-    { mes: 'Ene', gasto: 18200000, roas: 3.8 },
-    { mes: 'Feb', gasto: 22400000, roas: 4.1 },
-    { mes: 'Mar', gasto: 28900000, roas: 4.3 },
-    { mes: 'Abr', gasto: 31200000, roas: 4.2 },
-    { mes: 'May', gasto: 34500000, roas: 4.5 },
-    { mes: 'Jun', gasto: 38200000, roas: 4.6 },
-    { mes: 'Jul', gasto: 34950000, roas: 4.5 }
   ];
 
   if (loadingCampaigns) {
@@ -261,6 +364,21 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
               WoW: ${(totalGastoWow / 1000000).toFixed(1)}M 
               <span>{gastoVarWowPct >= 0 ? '+' : ''}{gastoVarWowPct.toFixed(1)}%</span>
             </span>
+            {pptoMarketing > 0 ? (
+              <span
+                className="text-amber-600 dark:text-amber-400 flex items-center justify-between"
+                title="Presupuesto prorrateado por día según el rango de fechas filtrado"
+              >
+                Ppto: ${(pptoMarketing / 1000000).toFixed(1)}M
+                <span className={gastoVarPptoPct <= 0 ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-rose-600 dark:text-rose-400 font-bold'}>
+                  {gastoVarPptoPct >= 0 ? '+' : ''}{gastoVarPptoPct.toFixed(1)}%
+                </span>
+              </span>
+            ) : (
+              <span className="text-slate-400 dark:text-slate-500 flex items-center justify-between italic">
+                Ppto: sin cargar
+              </span>
+            )}
           </div>
         </div>
 
@@ -507,57 +625,61 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
         </div>
       </div>
 
-      {/* TENDENCIA MENSUAL DE GASTO Y ROAS */}
+      {/* NUEVO GRÁFICO: TENDENCIA SEMANAL DE INVERSIÓN (SEMANAS 1 A 52: 2026 VS 2025 VS 2024) */}
       <div className={`p-5 rounded-2xl border transition-all duration-200 ${
         isDark ? 'bg-[#1C1C1E] border-[#2C2C2E]' : 'bg-white border-slate-200 shadow-sm'
       }`}>
-        <h3 className={`text-xs font-bold uppercase tracking-wider mb-4 flex items-center gap-2 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
-          <BarChart3 className="w-4 h-4" /> TENDENCIA MENSUAL DE GASTO Y ROAS (HISTÓRICO)
-        </h3>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+          <div>
+            <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+              <TrendingUp className="w-4 h-4" /> TENDENCIA SEMANAL DE INVERSIÓN (SEMANAS 1 A 52)
+            </h3>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
+              Comportamiento histórico de inversión publicitaria comparando 2026 vs 2025 y 2024
+            </p>
+          </div>
+
+          <div className="flex items-center gap-4 text-xs font-bold whitespace-nowrap">
+            <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+              <span className="w-3 h-3 rounded-full bg-blue-600 dark:bg-blue-400 inline-block"></span> 2026 Actual
+            </span>
+            <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+              <span className="w-3 h-0.5 bg-slate-500 dark:bg-slate-400 inline-block border-t border-dashed"></span> 2025 YoY
+            </span>
+            <span className="flex items-center gap-1.5 text-purple-600 dark:text-purple-400">
+              <span className="w-3 h-0.5 bg-purple-500 dark:bg-purple-400 inline-block border-t border-dotted"></span> 2024 2YoY
+            </span>
+          </div>
+        </div>
 
         <div className="h-64 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={monthlyTrendData} margin={{ top: 20, right: 20, left: 0, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#2C2C2E' : '#E2E8F0'} vertical={false} />
-              <XAxis dataKey="mes" stroke={isDark ? '#94A3B8' : '#334155'} fontSize={11} axisLine={false} tickLine={false} fontWeight="bold" />
-              <Tooltip 
-                contentStyle={{
-                  backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF',
-                  borderColor: isDark ? '#2C2C2E' : '#CBD5E1',
-                  borderRadius: '12px',
-                  boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-                  fontSize: '12px'
-                }}
-              />
-              <Bar dataKey="gasto" name="Inversión ($)" fill={isDark ? '#0A84FF' : '#2563EB'} radius={[6, 6, 0, 0]}>
-                <LabelList 
-                  dataKey="gasto" 
-                  position="top" 
-                  formatter={(val: number) => `$${(val / 1000000).toFixed(1)}M`} 
-                  fill={isDark ? '#EDEDED' : '#0F172A'} 
-                  fontSize={10} 
-                  fontWeight="bold" 
-                />
-              </Bar>
-              <Line 
-                type="monotone" 
-                dataKey="roas" 
-                name="ROAS (x)" 
-                stroke={isDark ? '#BF5AF2' : '#7E22CE'} 
-                strokeWidth={3} 
-                dot={{ r: 5, fill: isDark ? '#BF5AF2' : '#7E22CE' }}
-              >
-                <LabelList 
-                  dataKey="roas" 
-                  position="top" 
-                  formatter={(val: number) => `${val}x`} 
-                  fill={isDark ? '#BF5AF2' : '#7E22CE'} 
-                  fontSize={10} 
-                  fontWeight="bold" 
-                />
-              </Line>
-            </ComposedChart>
-          </ResponsiveContainer>
+          {loadingWeekly ? (
+            <div className="h-full flex items-center justify-center text-xs text-slate-400 gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-blue-500" /> Cargando gráfico semanal...
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={weeklyTrendData} margin={{ top: 10, right: 15, left: 10, bottom: 5 }}>
+                <defs>
+                  <linearGradient id="invGrad2026" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#0A84FF" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#0A84FF" stopOpacity={0.0} />
+                  </linearGradient>
+                  <linearGradient id="invGrad2025" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#8E8E93" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="#8E8E93" stopOpacity={0.0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? '#2C2C2E' : '#E2E8F0'} />
+                <XAxis dataKey="semana" stroke={isDark ? '#8E8E93' : '#64748B'} fontSize={10} interval={3} tickLine={false} fontWeight="bold" />
+                <YAxis stroke={isDark ? '#8E8E93' : '#64748B'} fontSize={10} tickLine={false} axisLine={false} tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`} />
+                <Tooltip contentStyle={{ backgroundColor: isDark ? '#1F1F23' : '#FFFFFF', borderColor: isDark ? '#333339' : '#E2E8F0', color: isDark ? '#EDEDED' : '#1E293B', borderRadius: '12px' }} formatter={(val: any, name: string) => [val != null ? fmtMoney(Number(val)) : 'Sin datos', name === 'actual2026' ? '2026 Actual' : name === 'yoy2025' ? '2025 YoY' : '2024 2YoY']} />
+                <Area type="monotone" dataKey="actual2026" name="2026 Actual" stroke="#0A84FF" strokeWidth={3} fill="url(#invGrad2026)" connectNulls={false} />
+                <Area type="monotone" dataKey="yoy2025" name="2025 YoY" stroke="#8E8E93" strokeWidth={1.5} strokeDasharray="3 3" fill="url(#invGrad2025)" />
+                <Area type="monotone" dataKey="yoy2024" name="2024 2YoY" stroke="#BF5AF2" strokeWidth={1.5} strokeDasharray="2 2" fill="none" />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 
@@ -632,6 +754,7 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
               <tr className={`border-b text-[10px] font-bold uppercase tracking-wider ${
                 isDark ? 'border-[#2C2C2E] text-slate-400 bg-[#121215]' : 'border-slate-200 text-slate-600 bg-slate-100'
               }`}>
+                <th className="py-3 px-2 text-center w-8"></th>
                 <th className="py-3 px-4 text-center">ORIGEN</th>
                 <th className="py-3 px-4 text-center">PIEZA GRÁFICA</th>
                 <SortableTh label="CAMPAÑA" sortKey="campana" currentSortKey={sortKey} sortDirection={sortDir} onSort={handleSort} />
@@ -644,7 +767,7 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
             <tbody className={`divide-y ${isDark ? 'divide-[#2C2C2E]' : 'divide-slate-200'}`}>
               {filteredCampaigns.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-500 dark:text-slate-400 italic">
+                  <td colSpan={8} className="py-12 text-center text-slate-500 dark:text-slate-400 italic">
                     Sin campañas registradas que coincidan con la búsqueda o filtros activos
                   </td>
                 </tr>
@@ -653,14 +776,31 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
                   const imgUrl = c.imagenUrl || c.imagen || c.piezagrafica || c.urlAnuncio;
                   const isGoogle = getPlataforma(c).toLowerCase().includes('google');
                   const nombreCampana = getCampanaName(c);
+                  const marcaCampana = c.marca || 'Kaltemp';
+                  const rowKey = `${getPlataforma(c)}__${nombreCampana}__${marcaCampana}`;
+                  const isExpanded = expandedKey === rowKey;
+                  const isLoadingAnuncios = loadingAnunciosKey === rowKey;
+                  const anuncios = anunciosPorCampana[rowKey];
 
                   return (
+                    <React.Fragment key={c.id || idx}>
                     <tr 
-                      key={c.id || idx} 
                       className={`transition-colors hover:bg-blue-500/5 ${
                         isDark ? 'text-slate-200' : 'text-slate-900'
-                      }`}
+                      } ${!isGoogle ? 'cursor-pointer' : ''}`}
+                      onClick={() => handleToggleExpand(c)}
                     >
+                      <td className="py-3 px-2 text-center">
+                        {!isGoogle && (
+                          isLoadingAnuncios ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 mx-auto" />
+                          ) : isExpanded ? (
+                            <ChevronDown className="w-3.5 h-3.5 text-slate-400 mx-auto" />
+                          ) : (
+                            <ChevronRight className="w-3.5 h-3.5 text-slate-400 mx-auto" />
+                          )
+                        )}
+                      </td>
                       <td className="py-3 px-4 text-center">
                         {isGoogle ? (
                           <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
@@ -680,7 +820,7 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
                       <td className="py-3 px-4 text-center">
                         {imgUrl ? (
                           <button
-                            onClick={() => setPreviewAd({ name: nombreCampana, url: imgUrl, platform: getPlataforma(c) })}
+                            onClick={(e) => { e.stopPropagation(); setPreviewAd({ name: nombreCampana, url: imgUrl, platform: getPlataforma(c) }); }}
                             className="group relative inline-flex items-center justify-center w-10 h-10 overflow-hidden rounded-xl border border-slate-300 dark:border-slate-700 shadow-sm bg-white focus:outline-none transition-transform hover:scale-105"
                             title="Ver anuncio completo"
                           >
@@ -707,7 +847,7 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
                       {/* Inversión sin decimales */}
                       <td className={`py-3 px-4 text-right font-bold whitespace-nowrap ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
                         <span>{fmtMoney(getGasto(c))}</span>
-                        <span className="text-[10px] block text-slate-500 dark:text-slate-400 font-normal">
+                        <span className="text-[10px] block text-slate-700 dark:text-slate-300 font-medium">
                           YoY: {fmtMoney(c.gastoYoy ?? 0)} | WoW: {fmtMoney(c.gastoWow ?? 0)}
                         </span>
                       </td>
@@ -729,10 +869,149 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
                       <td className={`py-3 px-4 text-right font-extrabold whitespace-nowrap ${isDark ? 'text-purple-400' : 'text-purple-700'}`}>
                         <span>{getRoas(c).toFixed(2)}x</span>
                         <span className={`text-[10px] block font-medium ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
-                          YoY: {(c.roasYoy ?? 0).toFixed(2)}x | WoW: {(c.roasYoy ?? 0).toFixed(2)}x
+                          YoY: {(c.roasYoy ?? 0).toFixed(2)}x | WoW: {(c.roasWow ?? 0).toFixed(2)}x
                         </span>
                       </td>
                     </tr>
+
+                                        {/* SECCIÓN EXPANDIDA: FILAS DIRECTAS ALINEADAS PÍXEL A PÍXEL CON LA TABLA PRINCIPAL */}
+                    {isExpanded && !isGoogle && (
+                      isLoadingAnuncios ? (
+                        <tr className={isDark ? "bg-[#121215]" : "bg-slate-50"}>
+                          <td colSpan={8} className="py-4 px-6 text-center text-xs text-slate-500 dark:text-slate-400">
+                            <div className="flex items-center justify-center gap-2">
+                              <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                              <span>Cargando anuncios de {nombreCampana}...</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : !anuncios || anuncios.length === 0 ? (
+                        <tr className={isDark ? "bg-[#121215]" : "bg-slate-50"}>
+                          <td colSpan={8} className="py-3 px-6 text-center text-xs text-slate-500 dark:text-slate-400 italic">
+                            Sin anuncios individuales registrados para esta campaña en el rango seleccionado.
+                          </td>
+                        </tr>
+                      ) : (
+                        <>
+                          {/* Subcabecera de detalle de anuncios */}
+                          <tr className={isDark ? "bg-[#18181B] border-t border-b border-blue-500/20" : "bg-blue-50/70 border-t border-b border-blue-200"}>
+                            <td colSpan={8} className="py-2 px-6">
+                              <div className="flex items-center justify-between">
+                                <span className={`text-[11px] font-bold uppercase tracking-wider ${isDark ? "text-blue-400" : "text-blue-700"}`}>
+                                  ↳ Detalle de Anuncios Meta ({anuncios.length}) — {nombreCampana}
+                                </span>
+                                <span className="text-[10px] text-slate-500 dark:text-slate-400 italic font-medium">
+                                  Alineación exacta por columna
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+
+                          {/* Filas directas de Anuncios */}
+                          {anuncios.map((a: any) => {
+                            const adImg = a.imagenUrl || a.imagen_url || a.imagen || a.piezagrafica || a.urlAnuncio;
+                            const adName = a.anuncio || a.ad_name || "Anuncio sin nombre";
+                            const adId = a.ad_id || a.adId || a.id;
+
+                            return (
+                              <tr
+                                key={a.id || adId}
+                                className={`border-b transition-colors ${
+                                  isDark
+                                    ? "bg-[#141417] hover:bg-[#1E1E22] border-[#2A2A2E] text-slate-200"
+                                    : "bg-slate-50/60 hover:bg-slate-100 border-slate-200 text-slate-900"
+                                }`}
+                              >
+                                {/* Col 1: Indentador */}
+                                <td className="py-2.5 px-2 text-center w-8">
+                                  <span className="text-slate-400 dark:text-slate-600 text-xs font-mono">└</span>
+                                </td>
+
+                                {/* Col 2: Origen Badge */}
+                                <td className="py-2.5 px-4 text-center">
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                                    isDark ? "bg-blue-500/10 text-blue-400 border-blue-500/20" : "bg-blue-100 text-blue-800 border-blue-200"
+                                  }`}>
+                                    Meta Ad
+                                  </span>
+                                </td>
+
+                                {/* Col 3: Pieza Gráfica */}
+                                <td className="py-2.5 px-4 text-center">
+                                  {adImg ? (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPreviewAnuncio({ name: adName, url: adImg });
+                                      }}
+                                      className="group relative inline-flex items-center justify-center w-10 h-10 overflow-hidden rounded-xl border border-slate-300 dark:border-slate-700 shadow-sm bg-white focus:outline-none transition-transform hover:scale-105 cursor-pointer"
+                                      title="Ver anuncio completo"
+                                    >
+                                      <img src={adImg} alt={adName} className="max-w-full max-h-full w-auto h-auto object-contain" />
+                                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                        <Eye className="w-3.5 h-3.5 text-white" />
+                                      </div>
+                                    </button>
+                                  ) : (
+                                    <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-slate-100 dark:bg-[#252528] border border-slate-200 dark:border-slate-800">
+                                      <ImageIcon className="w-4 h-4 text-slate-400 opacity-60" />
+                                    </span>
+                                  )}
+                                </td>
+
+                                {/* Col 4: Nombre, ID y Compras */}
+                                <td className="py-2.5 px-4 font-bold max-w-[280px] truncate" title={adName}>
+                                  <span className="text-xs font-bold text-slate-900 dark:text-white block truncate">{adName}</span>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    {adId && <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono font-medium">ID: {adId}</span>}
+                                    {(a.comprasCy || 0) > 0 ? (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300">
+                                        {a.comprasCy} compras · CPA: {fmtMoney(a.costoCompraCy || 0)}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] text-slate-500 dark:text-slate-400 font-medium">0 compras</span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* Col 5: Inversión */}
+                                <td className={`py-2.5 px-4 text-right font-bold whitespace-nowrap ${isDark ? "text-blue-400" : "text-blue-600"}`}>
+                                  <span className="text-xs">{fmtMoney(a.gastoCy || 0)}</span>
+                                  <span className="text-[10px] block font-medium text-slate-700 dark:text-slate-300 mt-0.5">
+                                    YoY: <span className="font-bold text-slate-900 dark:text-slate-100">{fmtMoney(a.gastoYoy || 0)}</span> | WoW: <span className="font-bold text-slate-900 dark:text-slate-100">{fmtMoney(a.gastoWow || 0)}</span>
+                                  </span>
+                                </td>
+
+                                {/* Col 6: Clics & CPC */}
+                                <td className="py-2.5 px-4 text-right font-semibold whitespace-nowrap">
+                                  <span className="text-xs">{(a.clicsCy || 0).toLocaleString("es-CL")} clics</span>
+                                  <span className="text-[10px] block font-medium text-slate-700 dark:text-slate-300 mt-0.5">
+                                    CPC: <span className="font-bold text-slate-900 dark:text-slate-100">{fmtMoney(a.cpcCy || 0)}</span>
+                                  </span>
+                                </td>
+
+                                {/* Col 7: CTR */}
+                                <td className="py-2.5 px-4 text-right font-semibold whitespace-nowrap">
+                                  <span className="text-xs text-emerald-600 dark:text-emerald-400 font-bold">{(a.ctrCy || 0).toFixed(1)}%</span>
+                                  <span className="text-[10px] block font-medium text-slate-700 dark:text-slate-300 mt-0.5">
+                                    YoY: <span className="font-bold text-slate-900 dark:text-slate-100">{(a.ctrYoy || 0).toFixed(1)}%</span>
+                                  </span>
+                                </td>
+
+                                {/* Col 8: ROAS */}
+                                <td className={`py-2.5 px-4 text-right font-extrabold whitespace-nowrap ${(a.roasCy || 0) > 0 ? (isDark ? "text-purple-400" : "text-purple-700") : "text-slate-500"}`}>
+                                  <span className="text-xs">{(a.roasCy || 0) > 0 ? `${(a.roasCy).toFixed(2)}x` : "0.00x"}</span>
+                                  <span className="text-[10px] block font-medium text-slate-700 dark:text-slate-300 mt-0.5">
+                                    WoW: <span className="font-bold text-slate-900 dark:text-slate-100">{(a.roasWow || 0) > 0 ? `${(a.roasWow).toFixed(2)}x` : "0.00x"}</span>
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </>
+                      )
+                    )}
+                    </React.Fragment>
                   );
                 })
               )}
@@ -778,6 +1057,52 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
             <div className="flex justify-end pt-2">
               <button
                 onClick={() => setPreviewAd(null)}
+                className="px-6 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-md cursor-pointer"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewAnuncio && (
+        <div
+          className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setPreviewAnuncio(null)}
+        >
+          <div
+            className={`relative max-w-xl w-full rounded-3xl border p-6 shadow-2xl space-y-4 ${
+              isDark ? 'bg-[#1C1C1E] border-[#2C2C2E] text-white' : 'bg-white border-slate-200 text-slate-900'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b pb-3 border-slate-200 dark:border-[#2C2C2E]">
+              <div>
+                <span className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                  Anuncio Individual · Meta
+                </span>
+                <h4 className="text-base font-bold truncate max-w-xs mt-0.5">{previewAnuncio.name}</h4>
+              </div>
+              <button
+                onClick={() => setPreviewAnuncio(null)}
+                className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-[#2C2C2E] text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="overflow-hidden rounded-2xl border border-slate-200 dark:border-[#2C2C2E] bg-black/5 flex items-center justify-center h-[450px] w-full">
+              <img
+                src={previewAnuncio.url}
+                alt={previewAnuncio.name}
+                className="w-full h-full object-contain rounded-xl shadow-md"
+              />
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setPreviewAnuncio(null)}
                 className="px-6 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-md cursor-pointer"
               >
                 Cerrar
