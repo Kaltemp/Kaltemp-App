@@ -107,7 +107,14 @@ def get_cumplimiento(
         yoy_ini = fecha_inicio.replace(year=fecha_inicio.year - 1)
         yoy_fin = fecha_fin.replace(year=fecha_fin.year - 1)
         yoy_canal_rows = con.execute(sql_canal, [yoy_ini, yoy_fin] + params_extra).fetchall()
-        yoy_canal = {row[0]: (row[1] or 0) for row in yoy_canal_rows}
+        # FIX (17-ago-2026, a pedido de William): antes esto guardaba
+        # SUM(BRUTO_TOTAL) -- venta bruta -- del mismo período año
+        # anterior. La tabla "Desglose de Contribución" del frontend usa
+        # este diccionario para el YoY%, así que terminaba comparando
+        # contribución actual contra venta bruta del año pasado sin que
+        # se notara. Ahora guarda CONTRIBUCION (índice 3 de sql_canal:
+        # CANAL, venta, neto, contri).
+        yoy_canal = {row[0]: (row[3] or 0) for row in yoy_canal_rows}
 
         # --- Unidades por categoría (período actual vs mismo período año anterior) ---
         sql_categoria = f"""
@@ -132,15 +139,25 @@ def get_cumplimiento(
         venta_m = (venta or 0) / 1_000_000
         neto_m = (neto or 0) / 1_000_000
         contri_m = (contri or 0) / 1_000_000
-        venta_diaria = venta_m / dias_transcurridos if dias_transcurridos else 0
+        # FIX (17-ago-2026, a pedido de William -- "toda la tabla debe
+        # hablar de contribución"): antes esto era venta_m (BRUTO_TOTAL,
+        # venta con IVA) / días -- la columna se llamaba "VENTA DIARIA"
+        # en una tabla titulada "Desglose de CONTRIBUCIÓN", mezclando dos
+        # magnitudes distintas sin avisar. Ahora es contribución / días,
+        # consistente con el resto de la tabla (CONTRIBUCIÓN, PROYECCIÓN,
+        # META y MARGEN ya usaban contri_m).
+        contri_diaria = contri_m / dias_transcurridos if dias_transcurridos else 0
         proy = round(contri_m * factor_runrate, 1)
+        # yoy_val ahora es contribución del mismo período año anterior
+        # (ver fix en yoy_canal más arriba), así que este YoY% compara
+        # contribución vs contribución, no venta bruta vs venta bruta.
         yoy_val = yoy_canal.get(canal, 0) / 1_000_000
-        yoy_pct = round(((venta_m - yoy_val) / yoy_val * 100), 1) if yoy_val else (100.0 if venta_m > 0 else 0.0)
+        yoy_pct = round(((contri_m - yoy_val) / yoy_val * 100), 1) if yoy_val else (100.0 if contri_m > 0 else 0.0)
         canal_breakdown.append({
             "canal": canal,
             "contri": round(contri_m, 1),
             "proy": proy,
-            "ventaDiaria": round(venta_diaria, 1),
+            "contriDiaria": round(contri_diaria, 1),
             "yoyPct": yoy_pct,
             "margenPct": round((contri_m / neto_m) * 100, 1) if neto_m else 0.0,
         })

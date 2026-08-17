@@ -8,8 +8,7 @@
 //   dato existe (ver diagnostico_fecha_entrega_enviame.py) -- no se
 //   agrega una columna con datos inventados mientras tanto.
 import React, { useState, useEffect, useMemo } from 'react';
-import { ThemeMode, BrandMode} from '../types';
-import { getBrandTokens } from '../theme/brandTokens';
+import { ThemeMode} from '../types';
 import { 
   Send, 
   DollarSign, 
@@ -27,12 +26,10 @@ import { fetchLogistica, fetchEnviameShipments } from '../services/api';
 
 interface Props {
   theme: ThemeMode;
-  brandMode: BrandMode;
 }
 
-export const LogisticsView: React.FC<Props> = ({ theme, brandMode }) => {
+export const LogisticsView: React.FC<Props> = ({ theme }) => {
   const isDark = theme === 'dark';
-  const brandTokens = getBrandTokens(brandMode, isDark);
   const { startDate, endDate } = useGlobalFilter();
 
   const [kpis, setKpis] = useState<any>(null);

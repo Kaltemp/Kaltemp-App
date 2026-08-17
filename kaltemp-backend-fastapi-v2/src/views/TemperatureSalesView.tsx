@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { DailyTempSale, ThemeMode, BrandMode} from '../types';
-import { getBrandTokens } from '../theme/brandTokens';
+import { DailyTempSale, ThemeMode} from '../types';
 import { Thermometer, Flame, Trophy } from 'lucide-react';
 import { useGlobalFilter } from '../context/FilterContext';
 import { fetchVentasTemperatura } from '../services/api';
@@ -24,12 +23,10 @@ interface ExtendedDailyTempSale extends DailyTempSale {
 
 interface Props {
   theme: ThemeMode;
-  brandMode: BrandMode;
 }
 
-export const TemperatureSalesView: React.FC<Props> = ({ theme, brandMode }) => {
+export const TemperatureSalesView: React.FC<Props> = ({ theme }) => {
   const isDark = theme === 'dark';
-  const brandTokens = getBrandTokens(brandMode, isDark);
   const { startDate, endDate } = useGlobalFilter();
 
   const [DAILY_TEMP_SALES, setDailyTempSales] = useState<ExtendedDailyTempSale[]>([]);
@@ -84,10 +81,10 @@ export const TemperatureSalesView: React.FC<Props> = ({ theme, brandMode }) => {
         <div className={`p-4 rounded-xl border shadow-md ${
           isDark ? 'bg-[#1F1F23] border-[#333339]' : 'bg-white border-slate-200'
         }`}>
-          <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: brandTokens.accent }}>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-blue-500">
             VENTA TOTAL PERIODO
           </span>
-          <div className="text-2xl sm:text-3xl font-extrabold mt-1" style={{ color: brandTokens.accent }}>
+          <div className="text-2xl sm:text-3xl font-extrabold text-blue-500 mt-1">
             ${(totalVenta / 1000000).toFixed(2)} M CLP
           </div>
           <span className="text-[11px] block mt-1 opacity-70">

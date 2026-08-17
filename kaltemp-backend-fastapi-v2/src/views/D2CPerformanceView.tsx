@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeMode } from '../types';
-import { getBrandTokens } from '../theme/brandTokens';
 import { TrendingUp, DollarSign, Smartphone, ShoppingBag, Eye, Zap, ArrowUpRight, CheckCircle2, RefreshCw } from 'lucide-react';
 import { useGlobalFilter, ALL_CATEGORIES, ALL_CHANNELS, ALL_REPS, ALL_WAREHOUSES } from '../context/FilterContext';
 import { CrossFilterBanner } from '../components/CrossFilterBanner';
@@ -123,12 +122,6 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedMarca, setSelectedMarca] = useState<'Kaltemp' | 'Tom Palmer'>('Kaltemp');
   const [ga4Disponible, setGa4Disponible] = useState(true);
-
-  // EXCEPCIÓN (ver theme/brandTokens.ts): D2C nunca recibe el selector
-  // global de modo de marca -- siempre resuelve su propio modo a partir
-  // de selectedMarca, porque este módulo nunca muestra "ambas marcas a
-  // la vez" (no existe un estado "Todas" acá).
-  const brandTokens = getBrandTokens(selectedMarca === 'Kaltemp' ? 'kaltemp' : 'tompalmer', isDark);
 
   const [sortKey, setSortKey] = useState<string>('venta');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');

@@ -47,16 +47,13 @@ import {
   Wallet,
   Clock
 } from 'lucide-react';
-import { ModuleId, ThemeMode, BrandMode } from '../types';
-import { getBrandTokens } from '../theme/brandTokens';
+import { ModuleId, ThemeMode } from '../types';
 
 interface SidebarProps {
   activeModule: ModuleId;
   onSelectModule: (m: ModuleId) => void;
   theme: ThemeMode;
   onThemeToggle?: () => void;
-  brandMode: BrandMode;
-  onBrandModeChange?: (m: BrandMode) => void;
   startDate: string;
   endDate: string;
   onStartDateChange: (d: string) => void;
@@ -135,8 +132,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectModule,
   theme,
   onThemeToggle,
-  brandMode,
-  onBrandModeChange,
   isCollapsed,
   onToggleCollapse,
   userEmail: propEmail,
@@ -144,7 +139,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLogout
 }) => {
   const isDark = theme === 'dark';
-  const brandTokens = getBrandTokens(brandMode, isDark);
   const {
     selectedCategories,
     setSelectedCategories,
@@ -262,10 +256,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             : 'bg-[#EAEBED] border-slate-300/80 text-[#1D1D1F]'
         }`}
       >
-        {/* Filete superior de marca -- responde al modo de marca global (ver theme/brandTokens.ts) */}
+        {/* Filete superior de marca */}
         <div
           className="h-[3px] w-full shrink-0"
-          style={{ background: brandTokens.hairline }}
+          style={{ background: 'linear-gradient(90deg, #E8791A 0%, #4a4550 50%, #1D6FA5 100%)' }}
         />
 
         {/* Top Header / Branding */}
@@ -380,21 +374,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 : 'text-slate-700 hover:bg-slate-300/60'
                             }`}
                           >
-                            {/* Barra activa -- color según el modo de marca */}
+                            {/* Barra activa */}
                             {isActive && (
                               <div
                                 className={`absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full transition-all duration-200 ${
                                   isCollapsed ? 'hidden' : 'block'
                                 }`}
-                                style={{ background: brandTokens.activeBar }}
+                                style={{ background: 'linear-gradient(180deg, #E8791A, #1D6FA5)' }}
                               />
                             )}
 
                             <div className="flex items-center gap-2.5 min-w-0">
-                              <Icon
-                                className="w-4 h-4 shrink-0 transition-colors duration-150"
-                                style={{ color: brandTokens.accent }}
-                              />
+                              <Icon className={`w-4 h-4 shrink-0 transition-colors duration-150 ${
+                                isActive ? 'text-[#E8791A]' : 'text-[#CC0000]'
+                              }`} />
                               <div className={`overflow-hidden transition-all duration-200 whitespace-nowrap text-left ${
                                 isCollapsed ? 'w-0 opacity-0 pointer-events-none' : 'w-auto opacity-100'
                               }`}>
@@ -610,33 +603,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               </div>
             </div>
-
-            {onBrandModeChange && (
-              <div className="grid grid-cols-3 gap-1">
-                {(['standard', 'kaltemp', 'tompalmer'] as const).map((modo) => {
-                  const activo = brandMode === modo;
-                  const tokensBoton = getBrandTokens(modo, isDark);
-                  const etiqueta = modo === 'standard' ? 'Standard' : modo === 'kaltemp' ? 'Kaltemp' : 'Tom Palmer';
-                  return (
-                    <button
-                      key={modo}
-                      onClick={() => onBrandModeChange(modo)}
-                      title={`Modo ${etiqueta}`}
-                      className={`py-1.5 px-1 rounded-lg text-[9.5px] font-bold border transition-all truncate ${
-                        activo
-                          ? isDark ? 'text-white' : 'text-white'
-                          : isDark
-                          ? 'bg-[#1C1C1E] border-[#2C2C2E] text-[#8E8E93] hover:text-white'
-                          : 'bg-white border-slate-300/80 text-slate-500 hover:text-slate-800'
-                      }`}
-                      style={activo ? { background: tokensBoton.hairline, borderColor: 'transparent' } : undefined}
-                    >
-                      {etiqueta}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
 
             {onThemeToggle && (
               <button

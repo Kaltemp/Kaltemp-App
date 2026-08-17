@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { ThemeMode, SkuNode, SellerNode, DocumentNode, ClientNode, BrandMode} from '../types';
-import { getBrandTokens } from '../theme/brandTokens';
+import { ThemeMode, SkuNode, SellerNode, DocumentNode, ClientNode } from '../types';
 import { ChevronRight, ChevronDown, Package, User, FileText, Building2, CheckCircle2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LabelList } from 'recharts';
 import { useGlobalFilter, ALL_REPS, ALL_CHANNELS, ALL_CATEGORIES } from '../context/FilterContext';
@@ -10,7 +9,6 @@ import { fetchSkuProductos, fetchSkuVendedores, fetchSkuDocumentos, fetchSkuClie
 
 interface Props {
   theme: ThemeMode;
-  brandMode: BrandMode;
   selectedCategory?: string;
   onCategoryChange?: (cat: string) => void;
 }
@@ -22,9 +20,8 @@ interface ChannelItem {
   yoyPct: number;
 }
 
-export const SkuSalesView: React.FC<Props> = ({ theme, brandMode }) => {
+export const SkuSalesView: React.FC<Props> = ({ theme }) => {
   const isDark = theme === 'dark';
-  const brandTokens = getBrandTokens(brandMode, isDark);
 
   const {
     selectedCategories,

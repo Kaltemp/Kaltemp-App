@@ -326,7 +326,7 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
       contri: c.contri,
       proy: c.proy,
       meta: contriReal ? Number(((c.contri / contriReal) * numContriMeta).toFixed(1)) : 0,
-      ventaDiaria: c.ventaDiaria,
+      contriDiaria: c.contriDiaria,
       yoyPct: c.yoyPct,
       margenPct: c.margenPct,
     }));
@@ -620,7 +620,7 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
                 <th className="py-3 px-4 text-right">CONTRIBUCIÓN</th>
                 <th className="py-3 px-4 text-right">PROYECCIÓN</th>
                 <th className="py-3 px-4 text-right">META</th>
-                <th className="py-3 px-4 text-right">VENTA DIARIA</th>
+                <th className="py-3 px-4 text-right">CONTRIBUCIÓN DIARIA</th>
                 <th className="py-3 px-4 text-right">YoY %</th>
                 <th className="py-3 px-4 text-right">MARGEN</th>
               </tr>
@@ -634,7 +634,7 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
                   <td className={`py-3 px-4 text-right font-black ${titleEmerald}`}>${row.contri.toFixed(1)} M</td>
                   <td className="py-3 px-4 text-right font-bold">${row.proy.toFixed(1)} M</td>
                   <td className={`py-3 px-4 text-right font-semibold ${subtextColor}`}>${row.meta.toFixed(1)} M</td>
-                  <td className="py-3 px-4 text-right font-semibold">${row.ventaDiaria.toFixed(1)} M</td>
+                  <td className="py-3 px-4 text-right font-semibold">${row.contriDiaria.toFixed(1)} M</td>
                   <td className={`py-3 px-4 text-right font-bold ${
                     row.yoyPct >= 0 ? titleEmerald : (isDark ? 'text-rose-400' : 'text-rose-700')
                   }`}>
@@ -798,8 +798,8 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
                     borderRadius: '12px'
                   }}
                 />
-                <Bar dataKey="y2025" name={`${prevYear} (u.)`} fill={isDark ? '#38383A' : '#cbd5e1'} radius={[0, 4, 4, 0]} />
-                <Bar dataKey="y2026" name={`${currentYear} (u.)`} fill="#BF5AF2" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="y2025" name={`${prevYear} (u.)`} stackId="unidades" fill={isDark ? '#38383A' : '#cbd5e1'} radius={[0, 0, 0, 0]} />
+                <Bar dataKey="y2026" name={`${currentYear} (u.)`} stackId="unidades" fill="#BF5AF2" radius={[0, 4, 4, 0]} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>

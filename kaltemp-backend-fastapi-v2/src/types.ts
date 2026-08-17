@@ -6,11 +6,6 @@
 
 export type ThemeMode = 'dark' | 'light';
 
-// Re-exportado desde theme/brandTokens.ts para que cualquier archivo
-// pueda importar el tipo BrandMode junto a ThemeMode/ModuleId sin
-// depender de la ruta del módulo de tokens.
-export type { BrandMode } from './theme/brandTokens';
-
 export type ModuleId =
   | 'resumen'
   | 'principal'

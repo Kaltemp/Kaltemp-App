@@ -25,6 +25,14 @@ export let ALL_WAREHOUSES: string[] = [];
 // canales reales que faltaban (confirmados contra datos reales: eran
 // negativos por devoluciones/notas de crédito y quedaban ocultos, lo que
 // inflaba el TOTAL mostrado en pantalla).
+// FIX (17-ago-2026, a pedido de William): se agrega 'HITES' -- confirmado
+// contra kaltemp_matrix.duckdb real que el vendedor "KALTEMP HITES" existe
+// y tenía ventas ($8,2M / 97 documentos) cayendo en OTROS por un mapeo
+// incorrecto en sync_ventas.py (ver MAPEO_CANALES, ya corregido). Los
+// demás canales que aparecían mal clasificados (Andes Gear, Paris
+// Fulfillment, Pablo Opazo) se reasignaron a canales YA existentes en
+// esta lista (D2C, PARIS, DISTRIBUIDORES respectivamente), así que no
+// necesitan una entrada nueva acá.
 export const ALL_CHANNELS = [
   'SHOWROOM',
   'DISTRIBUIDORES',
@@ -37,6 +45,7 @@ export const ALL_CHANNELS = [
   'MERCADOLIBRE',
   'TOM PALMER',
   'RIPLEY',
+  'HITES',
   'OFICINA',
   'OTROS'
 ];

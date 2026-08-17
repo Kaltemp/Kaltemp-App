@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { StockItem, ThemeMode, BrandMode} from '../types';
-import { getBrandTokens } from '../theme/brandTokens';
+import { StockItem, ThemeMode} from '../types';
 import { Search, X } from 'lucide-react';
 import { useGlobalFilter } from '../context/FilterContext';
 import { fetchStock } from '../services/api';
@@ -9,12 +8,10 @@ import { SortableTh } from '../components/SortableTh';
 
 interface Props {
   theme: ThemeMode;
-  brandMode: BrandMode;
 }
 
-export const StockView: React.FC<Props> = ({ theme, brandMode }) => {
+export const StockView: React.FC<Props> = ({ theme }) => {
   const isDark = theme === 'dark';
-  const brandTokens = getBrandTokens(brandMode, isDark);
   const { selectedCategory } = useGlobalFilter();
   const [search, setSearch] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);

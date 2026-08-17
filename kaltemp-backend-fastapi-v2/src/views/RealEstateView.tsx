@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { ThemeMode, BrandMode} from '../types';
-import { getBrandTokens } from '../theme/brandTokens';
+import { ThemeMode} from '../types';
 import { Building, DollarSign, TrendingUp, TrendingDown } from 'lucide-react';
 import { useGlobalFilter } from '../context/FilterContext';
 import { fetchRealEstate } from '../services/api';
@@ -18,12 +17,10 @@ import {
 
 interface Props {
   theme: ThemeMode;
-  brandMode: BrandMode;
 }
 
-export const RealEstateView: React.FC<Props> = ({ theme, brandMode }) => {
+export const RealEstateView: React.FC<Props> = ({ theme }) => {
   const isDark = theme === 'dark';
-  const brandTokens = getBrandTokens(brandMode, isDark);
   const { startDate, endDate } = useGlobalFilter();
 
   // Filtro cruzado LOCAL a este módulo (clic en una fila de la Tabla 1) --
@@ -161,10 +158,10 @@ export const RealEstateView: React.FC<Props> = ({ theme, brandMode }) => {
         <div className={`p-4 rounded-xl border shadow-md ${
           isDark ? 'bg-[#1F1F23] border-[#333339]' : 'bg-white border-slate-200'
         }`}>
-          <span className="text-[11px] font-bold uppercase tracking-wider block truncate" style={{ color: brandTokens.accent }}>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-blue-500 block truncate">
             VENTA B2B INMOBILIARIAS
           </span>
-          <div className="text-2xl font-extrabold mt-1" style={{ color: brandTokens.accent }}>
+          <div className="text-2xl font-extrabold text-blue-500 mt-1">
             ${(totalVentas / 1000000).toFixed(1)} M CLP
           </div>
           <div className="mt-2 space-y-0.5 text-xs font-semibold">

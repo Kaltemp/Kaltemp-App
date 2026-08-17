@@ -1,7 +1,6 @@
 // GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\components\AbandonedCartsView.tsx (o la carpeta donde ya vive hoy)
 import React, { useState, useEffect } from 'react';
-import { ThemeMode, BrandMode} from '../types';
-import { getBrandTokens } from '../theme/brandTokens';
+import { ThemeMode} from '../types';
 import { ShoppingCart, DollarSign, RefreshCw, Percent, TrendingDown, ArrowUpRight } from 'lucide-react';
 import { useGlobalFilter, ALL_CATEGORIES, ALL_CHANNELS, ALL_REPS, ALL_WAREHOUSES } from '../context/FilterContext';
 import { fetchAbandonedCarts } from '../services/api';
@@ -9,12 +8,10 @@ import { CrossFilterBanner } from '../components/CrossFilterBanner';
 
 interface Props {
   theme: ThemeMode;
-  brandMode: BrandMode;
 }
 
-export const AbandonedCartsView: React.FC<Props> = ({ theme, brandMode }) => {
+export const AbandonedCartsView: React.FC<Props> = ({ theme }) => {
   const isDark = theme === 'dark';
-  const brandTokens = getBrandTokens(brandMode, isDark);
 
   const { 
     startDate, 
@@ -89,13 +86,6 @@ export const AbandonedCartsView: React.FC<Props> = ({ theme, brandMode }) => {
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <CrossFilterBanner theme={theme} />
-
-      {/* Encabezado */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-black tracking-tight flex items-center gap-2.5" style={{ color: brandTokens.accent }}>
-          <ShoppingCart className="w-7 h-7" style={{ color: brandTokens.accent }} /> Carros Abandonados Shopify
-        </h1>
-      </div>
 
       {/* Top KPI Cards Estilo Apple HIG */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ThemeMode, BrandMode} from '../types';
-import { getBrandTokens } from '../theme/brandTokens';
+import { ThemeMode } from '../types';
 import { 
   Target, 
   Globe, 
@@ -37,7 +36,6 @@ import {
 
 interface Props {
   theme: ThemeMode;
-  brandMode: BrandMode;
 }
 
 const ICONO_FUENTE: Record<string, { icon: any; color: string }> = {
@@ -58,9 +56,8 @@ const iniciales = (nombre: string) =>
     .map((p) => p[0]?.toUpperCase())
     .join('') || '??';
 
-export const LeadsView: React.FC<Props> = ({ theme, brandMode }) => {
+export const LeadsView: React.FC<Props> = ({ theme }) => {
   const isDark = theme === 'dark';
-  const brandTokens = getBrandTokens(brandMode, isDark);
   const { startDate, endDate } = useGlobalFilter();
 
   const [data, setData] = useState<any | null>(null);
@@ -97,6 +94,7 @@ export const LeadsView: React.FC<Props> = ({ theme, brandMode }) => {
   const totalLeads = data?.totalLeads ?? 0;
   const totalLeadsYoy = data?.totalLeadsYoy ?? 0;
   const varYoyTotal = totalLeadsYoy ? (((totalLeads - totalLeadsYoy) / totalLeadsYoy) * 100).toFixed(1) : '—';
+  const isYoyNegativo = varYoyTotal !== '—' && Number(varYoyTotal) < 0;
 
   const convertidos = data?.convertidos ?? 0;
   const tasaConversion = data?.tasaConversion ?? 0;
@@ -139,13 +137,6 @@ export const LeadsView: React.FC<Props> = ({ theme, brandMode }) => {
     <div className="space-y-6 animate-in fade-in duration-300">
       <CrossFilterBanner theme={theme} />
 
-      {/* Encabezado */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-black tracking-tight flex items-center gap-2.5" style={{ color: brandTokens.accent }}>
-          <Target className="w-7 h-7" style={{ color: brandTokens.accent }} /> CRM Leads &amp; Gestión Comercial
-        </h1>
-      </div>
-
       {/* --- EXECUTIVE HEADER CARDS (5 KPI Cards) --- */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         
@@ -161,7 +152,11 @@ export const LeadsView: React.FC<Props> = ({ theme, brandMode }) => {
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className={`text-3xl font-black tracking-tight ${titleBlue}`}>{totalLeads}</span>
-            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+              isYoyNegativo
+                ? 'text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/20'
+                : 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+            }`}>
               {varYoyTotal === '—' ? 'YoY —' : `${Number(varYoyTotal) >= 0 ? '+' : ''}${varYoyTotal}%`}
             </span>
           </div>

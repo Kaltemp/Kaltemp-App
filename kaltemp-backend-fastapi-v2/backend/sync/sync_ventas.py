@@ -84,11 +84,20 @@ MAPEO_CANALES = {
     "MAXIMILIANO DIAZ": "INMOBILIARIAS", "MERCADOLIBRE": "MERCADOLIBRE", "PARIS": "PARIS", "RAFAEL ESCOBAR": "INMOBILIARIAS",
     "RIPLEY": "RIPLEY", "SANDRA AVENDAÑO": "SHOWROOM", "SEBASTIÁN ESPINOSA": "OFICINA", "SEBASTIAN ESPINOSA": "OFICINA",
     "SODIMAC": "OTROS", "TOMPALMER": "D2C", "WILLIAM GARRIDO": "D2C", "ANDESGEAR": "OTROS", "WALMART MKP": "WALMART MKP",
-    "STEFANY ROSALES": "D2C", "KALTEMP HITES": "OTROS", "BARBARA CABELLO": "OTROS", "LUIS BAEZA": "INMOBILIARIAS",
+    "STEFANY ROSALES": "D2C", "KALTEMP HITES": "HITES", "BARBARA CABELLO": "OTROS", "LUIS BAEZA": "INMOBILIARIAS",
     "SOLEDAD PASCUAL": "SHOWROOM", "DANIELA VALLADARES": "DISTRIBUIDORES", "MANUEL ERRAZURIZ": "TOM PALMER",
-    "MAXIMILIANO DIAZ - INMOBILIARIA": "INMOBILIARIAS", "DIANA LEON": "SHOWROOM", "PABLO OPAZO": "PABLO OPAZO",
+    "MAXIMILIANO DIAZ - INMOBILIARIA": "INMOBILIARIAS", "DIANA LEON": "SHOWROOM", "PABLO OPAZO": "DISTRIBUIDORES",
     "CATALINA POBLETE": "DISTRIBUIDORES", "DAVID LEON": "SERVICIO TÉCNICO", "KALTEMP FALABELLA": "FALABELLA",
-    "KALTEMP FALABELLA 2": "FALABELLA", "KALTEMP MERCADOLIBRE": "MERCADOLIBRE", "KALTEMP PARIS": "PARIS", "KALTEMP RIPLEY": "RIPLEY"
+    "KALTEMP FALABELLA 2": "FALABELLA", "KALTEMP MERCADOLIBRE": "MERCADOLIBRE", "KALTEMP PARIS": "PARIS", "KALTEMP RIPLEY": "RIPLEY",
+    # FIX (17-ago-2026, a pedido de William): estos 3 vendedores existen
+    # tal cual en Bsale (confirmado contra la base real) pero no tenían
+    # una entrada EXACTA en este diccionario, así que el .get(..., "OTROS")
+    # de más abajo los mandaba todos a "OTROS" en silencio -- ninguno era
+    # un error de tipeo en Bsale, era que acá faltaba la clave.
+    "KALTEMP ANDESGEAR": "OTROS",  # CORREGIDO (17-ago-2026, a pedido de William): va a OTROS, no a D2C -- el módulo D2C ya lo cuenta aparte por VENDEDOR, independiente de este CANAL
+    "PARIS FULLFILMENT": "PARIS",  # fulfillment de Paris, mismo canal que "KALTEMP PARIS"
+    "KALTEMP ITAU": "OTROS",  # ya cae en OTROS por defecto, se deja explícito para que no dependa del fallback
+    "KALTEMP SODIMAC": "OTROS",  # ídem
 }
 
 

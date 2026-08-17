@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { KPICard } from '../components/KPICard';
-import { ThemeMode, BrandMode} from '../types';
-import { getBrandTokens } from '../theme/brandTokens';
+import { ThemeMode} from '../types';
 import { ChannelSale } from '../types';
 import { fetchChannels, fetchTendenciaMensual, fetchAcumuladoYtd } from '../services/api';
 import { useGlobalFilter, ALL_REPS, ALL_CATEGORIES, ALL_CHANNELS } from '../context/FilterContext';
@@ -20,7 +19,6 @@ import {
 
 interface Props {
   theme: ThemeMode;
-  brandMode: BrandMode;
 }
 
 const CustomMonthlyTooltip = ({ active, payload, label, theme }: any) => {
@@ -110,9 +108,8 @@ const CustomLineLabel = (props: any) => {
   );
 };
 
-export const MainExecutiveView: React.FC<Props> = ({ theme, brandMode }) => {
+export const MainExecutiveView: React.FC<Props> = ({ theme }) => {
   const isDark = theme === 'dark';
-  const brandTokens = getBrandTokens(brandMode, isDark);
   const {
     selectedChannels,
     matchesChannel,
@@ -274,7 +271,7 @@ export const MainExecutiveView: React.FC<Props> = ({ theme, brandMode }) => {
         <KPICard
           title="VENTA TOTAL (BRUTO)"
           mainValue={formatM(totalBruto)}
-          colorValue={brandTokens.accent}
+          colorValue={isDark ? '#38BDF8' : '#0055D6'}
           sparklineSvg={sparkVenta}
           theme={theme}
           rows={[

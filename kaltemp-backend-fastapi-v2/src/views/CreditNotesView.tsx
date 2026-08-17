@@ -1,8 +1,7 @@
 // GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\components\CreditNotesView.tsx
 // (o la carpeta donde ya vive hoy tu CreditNotesView.tsx -- solo reemplaza ese archivo)
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { CreditNoteItem, ThemeMode, BrandMode} from '../types';
-import { getBrandTokens } from '../theme/brandTokens';
+import { CreditNoteItem, ThemeMode} from '../types';
 import { FileSpreadsheet, AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react';
 import { fetchNotasCredito } from '../services/api';
 import { useGlobalFilter } from '../context/FilterContext';
@@ -11,12 +10,10 @@ import { SortableTh } from '../components/SortableTh';
 
 interface Props {
   theme: ThemeMode;
-  brandMode: BrandMode;
 }
 
-export const CreditNotesView: React.FC<Props> = ({ theme, brandMode }) => {
+export const CreditNotesView: React.FC<Props> = ({ theme }) => {
   const isDark = theme === 'dark';
-  const brandTokens = getBrandTokens(brandMode, isDark);
 
   // Filtro de fechas GLOBAL (sidebar) -- antes este módulo lo ignoraba
   // por completo y siempre traía el histórico entero sin filtrar.
@@ -141,23 +138,6 @@ export const CreditNotesView: React.FC<Props> = ({ theme, brandMode }) => {
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-black tracking-tight flex items-center gap-2.5" style={{ color: brandTokens.accent }}>
-          <FileSpreadsheet className="w-7 h-7" style={{ color: brandTokens.accent }} /> Notas de Crédito
-        </h1>
-        <button
-          onClick={cargarNotasCredito}
-          disabled={loading}
-          title="Volver a pedir los datos al servidor"
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-            isDark ? 'bg-white/5 hover:bg-white/10 text-[#EDEDED]' : 'bg-black/5 hover:bg-black/10 text-slate-700'
-          } disabled:opacity-50`}
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Actualizar
-        </button>
-      </div>
-
       {/* KPI Cards Estilo Apple HIG */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         
@@ -228,6 +208,16 @@ export const CreditNotesView: React.FC<Props> = ({ theme, brandMode }) => {
           <h3 className={`text-xs font-black uppercase tracking-wider flex items-center gap-2 ${titleBlue}`}>
             <FileSpreadsheet className="w-4 h-4" /> AUDITORÍA DE NOTAS DE CRÉDITO
           </h3>
+          <button
+            onClick={cargarNotasCredito}
+            disabled={loading}
+            title="Volver a pedir los datos al servidor"
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              isDark ? 'bg-white/5 hover:bg-white/10 text-[#EDEDED]' : 'bg-black/5 hover:bg-black/10 text-slate-700'
+            } disabled:opacity-50`}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Actualizar
+          </button>
         </div>
 
         <div className="overflow-x-auto">
