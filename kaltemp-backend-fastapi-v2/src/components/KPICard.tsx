@@ -57,7 +57,7 @@ export const KPICard: React.FC<KPICardProps> = ({
 
       {/* Cuerpo Principal: Monto + Sparkline a la izquierda | Filas WOW/YOY a la derecha */}
       <div className="grid grid-cols-12 gap-2 items-center">
-        
+
         {/* Lado Izquierdo: Valor Principal y Mini Gráfico */}
         <div className="col-span-6 flex flex-col justify-center min-w-0 pr-1">
           <span
@@ -100,15 +100,15 @@ export const KPICard: React.FC<KPICardProps> = ({
 
               return (
                 <div key={i} className="flex items-center justify-between text-[10.5px] leading-tight">
-                  <span className="font-bold text-zinc-400 dark:text-zinc-400 text-[10px] shrink-0">
-                    {r.label}
+                  <span className="font-bold text-zinc-500 dark:text-zinc-400 text-[10px] shrink-0">
+                  {r.label}
                   </span>
-                  
-                  <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-                    <span className="font-bold text-zinc-700 dark:text-zinc-200 font-mono text-[10.5px]">
-                      {r.value}
-                    </span>
-                    
+
+                <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+                  <span className="font-bold text-zinc-500 dark:text-zinc-400 font-mono text-[10.5px]">
+                    {r.value}
+                  </span>
+
                     <span
                       className={`font-black text-[9.5px] font-mono ${
                         isPos

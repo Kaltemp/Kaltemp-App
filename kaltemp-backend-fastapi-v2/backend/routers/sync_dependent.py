@@ -415,7 +415,23 @@ def get_pendientes_despacho_documentos():
 
 
 @router.get("/notas-credito")
-def get_notas_credito():
+def get_notas_credito(fecha_inicio: date = Query(None), fecha_fin: date = Query(None)):
+    """
+    fecha_inicio / fecha_fin (YYYY-MM-DD, opcionales): filtran por
+    FECHA_EMISION -- la "Fecha Impacto" declarada ante el SII (mismo campo
+    que usa el resto del dashboard para ubicar un documento en el tiempo).
+    Si no vienen, se devuelve el histórico completo (comportamiento
+    anterior, para no romper a nadie que llame este endpoint sin filtros).
+
+    FIX (19-ago-2026, reportado por William: "el módulo notas de crédito
+    no está respetando el filtro de fecha"): esta función NUNCA declaraba
+    fecha_inicio/fecha_fin como parámetros, pese a que CreditNotesView.tsx
+    (vía fetchNotasCredito) siempre los mandaba en la URL -- FastAPI
+    ignora en silencio cualquier query param que el endpoint no declare
+    (no da error), así que el filtro del sidebar nunca llegaba a tocar la
+    consulta SQL y el módulo siempre devolvía el histórico completo de
+    notas_credito_desfase sin importar el rango elegido.
+    """
     with get_connection() as con:
         if not _tabla_existe(con, "notas_credito_desfase"):
             return {
@@ -443,12 +459,19 @@ def get_notas_credito():
         select_descripcion = "DESCRIPCION_PRODUCTO" if "DESCRIPCION_PRODUCTO" in columnas_nc else "NULL"
         select_generacion = "GENERACION_DATE" if "GENERACION_DATE" in columnas_nc else "NULL"
 
+        filtro_fecha = ""
+        params: list = []
+        if fecha_inicio and fecha_fin:
+            filtro_fecha = "WHERE CAST(FECHA_EMISION AS DATE) BETWEEN ? AND ?"
+            params = [fecha_inicio, fecha_fin]
+
         filas = con.execute(f"""
             SELECT DOCUMENTO, CLIENTE, {select_vendedor}, {select_doc_original}, {select_descripcion},
                    FECHA_EMISION, FECHA_CAIDA, {select_generacion}, DIAS_DESFASE, MONTO, ALERTA
             FROM notas_credito_desfase
+            {filtro_fecha}
             ORDER BY DIAS_DESFASE DESC
-        """).fetchall()
+        """, params).fetchall()
 
     mensaje = None
     if ("VENDEDOR" not in columnas_nc or "DOCUMENTO_REFERENCIA" not in columnas_nc

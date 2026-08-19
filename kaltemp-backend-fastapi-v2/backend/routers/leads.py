@@ -1,7 +1,7 @@
 import duckdb
 from fastapi import APIRouter, Query
 from typing import Optional
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import os
 import pandas as pd
 
@@ -30,7 +30,7 @@ def get_leads(
 
         if df_all.empty:
             return {
-                "totalLeads": 0, "totalLeadsYoy": 0, "totalLeads2Yoy": 0,
+                "totalLeads": 0, "totalLeadsWow": 0, "totalLeadsYoy": 0, "totalLeads2Yoy": 0,
                 "convertidos": 0, "tasaConversion": 0,
                 "canalPrincipal": {"nombre": "—", "pct": 0},
                 "topVendedor": {"nombre": "—", "pct": 0},
@@ -45,7 +45,7 @@ def get_leads(
 
         if df_all.empty:
             return {
-                "totalLeads": 0, "totalLeadsYoy": 0, "totalLeads2Yoy": 0,
+                "totalLeads": 0, "totalLeadsWow": 0, "totalLeadsYoy": 0, "totalLeads2Yoy": 0,
                 "convertidos": 0, "tasaConversion": 0,
                 "canalPrincipal": {"nombre": "—", "pct": 0},
                 "topVendedor": {"nombre": "—", "pct": 0},
@@ -85,7 +85,7 @@ def get_leads(
         df_all["CANAL_DISP"] = df_all["CANAL"].apply(normalizar_canal)
         df_all["ESTADO_DISP"] = df_all["ESTADO"].apply(normalizar_estado)
         df_all["FUENTE_DISP"] = df_all["FUENTE"].apply(limpiar_fuente)
-        
+
         if "PRODUCTO" not in df_all.columns:
             df_all["PRODUCTO"] = "General / Consulta Web"
         else:
@@ -106,6 +106,18 @@ def get_leads(
 
         df_filt = df_all[(df_all["FECHA_CORTE"] >= f_in) & (df_all["FECHA_CORTE"] <= f_fi)]
         total_leads = len(df_filt)
+
+        # WoW (agregado 19-ago-2026, a pedido de William: la tarjeta TOTAL LEADS
+        # solo tenía YoY). Mismo criterio que ya usan channels.py/fulfillment.py
+        # para WoW en el resto de la app: la misma cantidad de días del rango
+        # seleccionado, corrida 7 días atrás -- no depende de reemplazar el año,
+        # así que no tiene el borde de Feb-29 que sí tiene el cálculo YoY/2YoY.
+        try:
+            f_in_wow = f_in - timedelta(days=7)
+            f_fi_wow = f_fi - timedelta(days=7)
+            total_wow = len(df_all[(df_all["FECHA_CORTE"] >= f_in_wow) & (df_all["FECHA_CORTE"] <= f_fi_wow)])
+        except Exception:
+            total_wow = 0
 
         # YoY
         try:
@@ -218,6 +230,7 @@ def get_leads(
 
         return {
             "totalLeads": total_leads,
+            "totalLeadsWow": total_wow,
             "totalLeadsYoy": total_yoy,
             "totalLeads2Yoy": total_2yoy,
             "convertidos": convertidos,

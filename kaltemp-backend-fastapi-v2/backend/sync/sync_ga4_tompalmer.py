@@ -21,6 +21,18 @@ Google Analytics) como variable de entorno GA4_PROPERTY_ID_TP, o
 pásalo directo en la línea de comandos:
 
     python sync/sync_ga4_tompalmer.py 123456789
+
+CORREGIDO (19-ago-2026, mismo bug real que sync_ga4_kaltemp.py,
+confirmado con el panel web "Motor de Actualización" -- sync_admin.py):
+antes, el guardado en DuckDB SIEMPRE hacía DROP TABLE + CREATE TABLE AS
+SELECT usando SOLO las filas recién traídas de GA4 para la ventana
+[fecha_desde, hoy]. El botón "Actualizar Ahora (últimos 30 días)" del
+panel web le pasa dias_atras=30 a TODAS las tablas que lo soportan,
+incluida esta -- así que borraba TODO el histórico de
+ga4_metricas_tompalmer y lo dejaba solo con los últimos 30 días. Ahora
+se borra e inserta SOLO el rango [fecha_desde, hoy] que realmente se
+volvió a consultar -- el resto del histórico queda intacto sin
+importar qué tan chico sea dias_atras.
 """
 import os
 import sys
@@ -121,26 +133,19 @@ def sync_ga4_tompalmer(progress_callback=None, dias_atras: int = None):
     df["FECHA"] = pd.to_datetime(df["FECHA"])
 
     with duckdb.connect(DB_FILE) as con:
-        # FIX (15-ago-2026): mismo problema y misma solución que
-        # sync_ga4_kaltemp.py -- ver ese archivo para el detalle completo.
-        # Antes DROP+CREATE borraba todo el histórico en cada corrida con
-        # dias_atras chico; ahora solo se reemplaza la ventana consultada.
-        tablas = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
-        if "ga4_metricas_tompalmer" not in tablas:
-            con.execute("""
-                CREATE TABLE ga4_metricas_tompalmer (
-                    FECHA TIMESTAMP, DISPOSITIVO VARCHAR, SESIONES BIGINT,
-                    TASA_REBOTE DOUBLE, ADD_TO_CART BIGINT, CHECKOUTS BIGINT,
-                    TRANSACCIONES BIGINT
-                )
-            """)
-        con.execute(
-            "DELETE FROM ga4_metricas_tompalmer WHERE CAST(FECHA AS DATE) >= CAST(? AS DATE)",
-            [fecha_desde],
-        )
         con.register("df_ga4_tp_tmp", df)
-        con.execute("INSERT INTO ga4_metricas_tompalmer SELECT * FROM df_ga4_tp_tmp")
-        print(f"[{datetime.now()}] ✅ ga4_metricas_tompalmer actualizada con {len(df)} filas (ventana desde {fecha_desde}).")
+        existe = con.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'ga4_metricas_tompalmer'"
+        ).fetchone()[0] > 0
+        if not existe:
+            con.execute("CREATE TABLE ga4_metricas_tompalmer AS SELECT * FROM df_ga4_tp_tmp")
+        else:
+            # CORREGIDO (19-ago-2026): ver comentario equivalente en
+            # sync_ga4_kaltemp.py -- antes era DROP+CREATE completo,
+            # ahora solo se borra/reinserta el rango consultado.
+            con.execute("DELETE FROM ga4_metricas_tompalmer WHERE FECHA >= CAST(? AS DATE)", [fecha_desde])
+            con.execute("INSERT INTO ga4_metricas_tompalmer SELECT * FROM df_ga4_tp_tmp")
+        print(f"[{datetime.now()}] ✅ ga4_metricas_tompalmer actualizada con {len(df)} filas ({fecha_desde} → hoy).")
 
 
 if __name__ == "__main__":

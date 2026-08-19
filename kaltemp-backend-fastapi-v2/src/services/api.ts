@@ -401,7 +401,9 @@ export async function fetchD2CPerformance(
   return apiGet<any>(`/api/indicadores-d2c?${params.toString()}`);
 }
 
-// 12. CANAL DISTRIBUIDORES (B2B)
+// 12. CANAL DISTRIBUIDORES (B2B) — distributors.py NO acepta parámetro "tipo":
+// el filtro a distribuidores (CANAL LIKE '%DISTRIBUIDOR%' / vendedores fijos)
+// está hardcodeado en el propio backend. Solo recibe fechas.
 export async function fetchDistributors(
   fechaInicio?: string, fechaFin?: string
 ): Promise<any> {
@@ -409,6 +411,32 @@ export async function fetchDistributors(
   if (fechaInicio) params.append('fecha_inicio', fechaInicio);
   if (fechaFin) params.append('fecha_fin', fechaFin);
   return apiGet<any>(`/api/distributors?${params.toString()}`);
+}
+
+// 12b. DISTRIBUIDORES -- ACORDEÓN TABLA 1 (18-ago-2026): Categoría -> Producto
+// -> Cliente. Nivel 1 (categoría) ya viene en distribucionCategoria dentro
+// de fetchDistributors(); estos 2 endpoints son niveles 2 y 3, se piden
+// perezosamente (lazy-load) solo cuando el usuario despliega una fila,
+// igual que el árbol Producto->Vendedor->Documento->Cliente de sku.py.
+export async function fetchDistributorsProductosPorCategoria(
+  categoria: string, fechaInicio?: string, fechaFin?: string
+): Promise<any> {
+  const params = new URLSearchParams();
+  params.append('categoria', categoria);
+  if (fechaInicio) params.append('fecha_inicio', fechaInicio);
+  if (fechaFin) params.append('fecha_fin', fechaFin);
+  return apiGet<any>(`/api/distributors/productos-por-categoria?${params.toString()}`);
+}
+
+export async function fetchDistributorsClientesPorProducto(
+  producto: string, categoria: string, fechaInicio?: string, fechaFin?: string
+): Promise<any> {
+  const params = new URLSearchParams();
+  params.append('producto', producto);
+  params.append('categoria', categoria);
+  if (fechaInicio) params.append('fecha_inicio', fechaInicio);
+  if (fechaFin) params.append('fecha_fin', fechaFin);
+  return apiGet<any>(`/api/distributors/clientes-por-producto?${params.toString()}`);
 }
 
 // 13. CANAL INMOBILIARIA
@@ -419,6 +447,29 @@ export async function fetchRealEstate(
   if (fechaInicio) params.append('fecha_inicio', fechaInicio);
   if (fechaFin) params.append('fecha_fin', fechaFin);
   return apiGet<any>(`/api/real-estate?${params.toString()}`);
+}
+
+// 13b. INMOBILIARIA -- ACORDEÓN TABLA 1 (18-ago-2026): Categoría -> Producto
+// -> Proyecto/Cliente. Mismo patrón que 12b, sobre /api/real-estate.
+export async function fetchRealEstateProductosPorCategoria(
+  categoria: string, fechaInicio?: string, fechaFin?: string
+): Promise<any> {
+  const params = new URLSearchParams();
+  params.append('categoria', categoria);
+  if (fechaInicio) params.append('fecha_inicio', fechaInicio);
+  if (fechaFin) params.append('fecha_fin', fechaFin);
+  return apiGet<any>(`/api/real-estate/productos-por-categoria?${params.toString()}`);
+}
+
+export async function fetchRealEstateClientesPorProducto(
+  producto: string, categoria: string, fechaInicio?: string, fechaFin?: string
+): Promise<any> {
+  const params = new URLSearchParams();
+  params.append('producto', producto);
+  params.append('categoria', categoria);
+  if (fechaInicio) params.append('fecha_inicio', fechaInicio);
+  if (fechaFin) params.append('fecha_fin', fechaFin);
+  return apiGet<any>(`/api/real-estate/clientes-por-producto?${params.toString()}`);
 }
 
 // 14. VENTAS VS TEMPERATURA

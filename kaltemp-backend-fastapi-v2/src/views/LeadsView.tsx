@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeMode } from '../types';
-import { 
-  Target, 
-  Globe, 
-  Layers, 
-  TrendingUp, 
-  Calendar, 
-  User, 
-  MapPin, 
-  MessageSquare, 
-  CheckCircle2, 
-  Award, 
+import {
+  Target,
+  Globe,
+  Layers,
+  TrendingUp,
+  Calendar,
+  User,
+  MapPin,
+  MessageSquare,
+  CheckCircle2,
+  Award,
   ArrowUpRight,
   Filter,
   Sparkles,
@@ -92,9 +92,18 @@ export const LeadsView: React.FC<Props> = ({ theme }) => {
   }
 
   const totalLeads = data?.totalLeads ?? 0;
+  const totalLeadsWow = data?.totalLeadsWow ?? 0;
   const totalLeadsYoy = data?.totalLeadsYoy ?? 0;
+  const varWowTotal = totalLeadsWow ? (((totalLeads - totalLeadsWow) / totalLeadsWow) * 100).toFixed(1) : '—';
   const varYoyTotal = totalLeadsYoy ? (((totalLeads - totalLeadsYoy) / totalLeadsYoy) * 100).toFixed(1) : '—';
-  const isYoyNegativo = varYoyTotal !== '—' && Number(varYoyTotal) < 0;
+
+  // Clases de badge según signo -- antes eran siempre verdes aunque el
+  // valor fuera negativo (19-ago-2026, se aprovecha para dejarlo correcto
+  // en las dos badges -- WoW nueva y YoY existente -- al mismo tiempo).
+  const badgeClase = (valor: string) =>
+    valor !== '—' && Number(valor) < 0
+      ? 'text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/20'
+      : 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
 
   const convertidos = data?.convertidos ?? 0;
   const tasaConversion = data?.tasaConversion ?? 0;
@@ -137,10 +146,24 @@ export const LeadsView: React.FC<Props> = ({ theme }) => {
     <div className="space-y-6 animate-in fade-in duration-300">
       <CrossFilterBanner theme={theme} />
 
+      {/* Encabezado */}
+      <div className="flex items-center justify-between">
+        <h1 className={`text-2xl font-black tracking-tight flex items-center gap-2.5 ${titleBlue}`}>
+          <Target className="w-7 h-7 text-blue-600 dark:text-blue-400" /> CRM Leads &amp; Gestión Comercial
+        </h1>
+      </div>
+
       {/* --- EXECUTIVE HEADER CARDS (5 KPI Cards) --- */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        
-        {/* KPI 1: Total Leads */}
+
+        {/* KPI 1: Total Leads -- AGREGADO 19-ago-2026 (pedido de William):
+            antes solo tenía comparación YoY. Se agrega WoW (semana
+            anterior, misma duración de rango corrida 7 días atrás) como
+            una segunda badge, y una segunda línea al pie con el valor
+            absoluto "Vs sem. ant." junto al "Vs {añoAnterior}" que ya
+            existía. De paso, las badges ahora cambian a rojo cuando la
+            variación es negativa (antes siempre eran verdes sin importar
+            el signo). */}
         <div className={`p-5 rounded-2xl border transition-all hover:shadow-md ${panelBg}`}>
           <div className="flex items-center justify-between">
             <span className={`text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 ${titleBlue}`}>
@@ -152,15 +175,17 @@ export const LeadsView: React.FC<Props> = ({ theme }) => {
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className={`text-3xl font-black tracking-tight ${titleBlue}`}>{totalLeads}</span>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-              isYoyNegativo
-                ? 'text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/20'
-                : 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
-            }`}>
-              {varYoyTotal === '—' ? 'YoY —' : `${Number(varYoyTotal) >= 0 ? '+' : ''}${varYoyTotal}%`}
+          </div>
+          <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeClase(varWowTotal)}`}>
+              {varWowTotal === '—' ? 'WoW —' : `${Number(varWowTotal) >= 0 ? '+' : ''}${varWowTotal}% WoW`}
+            </span>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeClase(varYoyTotal)}`}>
+              {varYoyTotal === '—' ? 'YoY —' : `${Number(varYoyTotal) >= 0 ? '+' : ''}${varYoyTotal}% YoY`}
             </span>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-100 dark:border-[#2C2C2E] flex justify-between text-xs font-medium">
+            <span className={subtextColor}>Vs sem. ant.: <strong className={isDark ? "text-white" : "text-slate-900"}>{totalLeadsWow} u.</strong></span>
             <span className={subtextColor}>Vs {anioAnterior}: <strong className={isDark ? "text-white" : "text-slate-900"}>{totalLeadsYoy} u.</strong></span>
           </div>
         </div>
@@ -377,13 +402,20 @@ export const LeadsView: React.FC<Props> = ({ theme }) => {
 
       {/* --- SECTION 3: CUÁDRUPLE GRID --- */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        
-        {/* Panel 1: Productos de Interés */}
+
+        {/* Panel 1: Productos de Interés -- AGREGADO 19-ago-2026 (pedido de
+            William): la lista puede tener ~20 filas (una por cada valor
+            distinto de PRODUCTO en el rango), y sin límite de alto
+            estiraba toda la fila del grid (los otros 3 paneles quedaban
+            con espacio vacío abajo). Se le da scroll interno con
+            max-h + overflow-y-auto en vez de limitar la cantidad de
+            productos mostrados -- así se sigue viendo el listado
+            completo, solo que dentro de un alto fijo. */}
         <div className={`p-5 rounded-2xl border shadow-sm ${panelBg}`}>
           <h3 className={`text-xs font-black uppercase tracking-wider mb-4 flex items-center gap-2 ${titleRose}`}>
             <Package className="w-4 h-4" /> PRODUCTO / CATEGORÍA DE INTERÉS
           </h3>
-          <div className="space-y-3.5">
+          <div className="space-y-3.5 max-h-[380px] overflow-y-auto overflow-x-hidden pr-1">
             {productosData.map((p: any) => (
               <div key={p.producto} className="space-y-1">
                 <div className="flex justify-between items-center text-xs font-bold">
@@ -395,9 +427,9 @@ export const LeadsView: React.FC<Props> = ({ theme }) => {
                   </span>
                 </div>
                 <div className={`w-full h-2 rounded-full overflow-hidden ${isDark ? 'bg-[#2C2C2E]' : 'bg-slate-100'}`}>
-                  <div 
-                    className="h-full rounded-full bg-gradient-to-r from-rose-500 to-rose-400 transition-all duration-500" 
-                    style={{ width: `${(p.count / maxProducto) * 100}%` }} 
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-rose-500 to-rose-400 transition-all duration-500"
+                    style={{ width: `${(p.count / maxProducto) * 100}%` }}
                   />
                 </div>
               </div>

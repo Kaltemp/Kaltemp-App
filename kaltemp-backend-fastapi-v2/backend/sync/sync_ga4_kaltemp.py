@@ -3,10 +3,6 @@
 # GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\sync\sync_ga4_kaltemp.py
 # ============================================================
 
-# ============================================================
-# ARCHIVO: sync_ga4_kaltemp.py
-# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\sync\sync_ga4_kaltemp.py
-# ============================================================
 """
 sync/sync_ga4_kaltemp.py — Trae Sesiones/Rebote/ATC/Checkouts/
 Transacciones desde la propiedad de GA4 de Kaltemp (kaltemp.cl), usando
@@ -32,6 +28,19 @@ la propiedad de kaltemp.cl). Confirma también que la cuenta de servicio
 (kaltemp-bot@...) tenga rol "Lector" en ESA propiedad específica -- es
 el mismo bot que ya se usa para Tom Palmer y Sheets, pero los permisos
 de GA4 son por propiedad, no se heredan automáticamente entre ellas.
+
+CORREGIDO (19-ago-2026, bug real confirmado con el panel web "Motor de
+Actualización" -- sync_admin.py): antes, el guardado en DuckDB SIEMPRE
+hacía DROP TABLE + CREATE TABLE AS SELECT usando SOLO las filas
+recién traídas de GA4 para la ventana [fecha_desde, hoy]. Eso significa
+que el botón "Actualizar Ahora (últimos 30 días)" del panel web -- que
+le pasa dias_atras=30 a TODAS las tablas que lo soportan, incluida esta
+-- borraba TODO el histórico de ga4_metricas (~2 años) y lo dejaba solo
+con los últimos 30 días. Ahora se usa el mismo patrón que ya corrigió
+este mismo bug en sync_temperaturas.py: se borra e inserta SOLO el
+rango [fecha_desde, hoy] que realmente se volvió a consultar -- el
+resto del histórico queda intacto sin importar qué tan chico sea
+dias_atras.
 """
 import os
 import duckdb
@@ -152,32 +161,23 @@ def sync_ga4_kaltemp(progress_callback=None, dias_atras: int = None):
     df["FECHA"] = pd.to_datetime(df["FECHA"])
 
     with duckdb.connect(DB_FILE) as con:
-        # FIX (15-ago-2026, a pedido de William -- ver auditoría del chat):
-        # antes esto era DROP TABLE + CREATE AS SELECT, así que una corrida
-        # con dias_atras chico (ej. un reproceso puntual de 5 días) BORRABA
-        # TODO el histórico de GA4 y lo dejaba reducido solo a esos 5 días
-        # -- rompiendo cualquier comparativo YoY en D2C y en Resumen (que
-        # dependen de sesiones de hace más de un año). Ahora: se crea la
-        # tabla una sola vez y cada corrida solo reemplaza la ventana de
-        # fechas [fecha_desde, hoy] que efectivamente se volvió a consultar
-        # en GA4 -- el resto del histórico queda intacto.
-        tablas = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
-        if "ga4_metricas" not in tablas:
-            con.execute("""
-                CREATE TABLE ga4_metricas (
-                    FECHA TIMESTAMP, DISPOSITIVO VARCHAR, SESIONES BIGINT,
-                    TASA_REBOTE DOUBLE, ADD_TO_CART BIGINT, CHECKOUTS BIGINT,
-                    TRANSACCIONES BIGINT
-                )
-            """)
-        con.execute(
-            "DELETE FROM ga4_metricas WHERE CAST(FECHA AS DATE) >= CAST(? AS DATE)",
-            [fecha_desde],
-        )
         con.register("df_ga4_kaltemp_tmp", df)
-        con.execute("INSERT INTO ga4_metricas SELECT * FROM df_ga4_kaltemp_tmp")
+        existe = con.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'ga4_metricas'"
+        ).fetchone()[0] > 0
+        if not existe:
+            con.execute("CREATE TABLE ga4_metricas AS SELECT * FROM df_ga4_kaltemp_tmp")
+        else:
+            # CORREGIDO (19-ago-2026): antes esto era un DROP TABLE +
+            # CREATE TABLE completo -- pedir una ventana chica (ej.
+            # dias_atras=30 desde "Actualizar Ahora") borraba TODO el
+            # histórico y dejaba solo esos 30 días. Ahora solo se borra
+            # y reinserta el rango [fecha_desde, hoy] que realmente se
+            # volvió a consultar -- el resto del histórico queda intacto.
+            con.execute("DELETE FROM ga4_metricas WHERE FECHA >= CAST(? AS DATE)", [fecha_desde])
+            con.execute("INSERT INTO ga4_metricas SELECT * FROM df_ga4_kaltemp_tmp")
 
-    report(100, f"✨ ga4_metricas actualizada con {len(df)} filas (ventana desde {fecha_desde}).")
+    report(100, f"✨ ga4_metricas actualizada con {len(df)} filas ({fecha_desde} → hoy).")
 
 
 if __name__ == "__main__":

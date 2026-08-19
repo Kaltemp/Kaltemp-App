@@ -160,6 +160,23 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
 
   const fmtMoney = (val: number) => `$${Math.round(val || 0).toLocaleString('es-CL', { maximumFractionDigits: 0 })}`;
 
+  // Color consistente para variaciones %: negativo = rojo, positivo (o cero) = verde.
+  // Se usa en TODAS las tarjetas KPI y en el comparativo Google/Meta.
+  const pctColor = (pct: number) =>
+    pct >= 0
+      ? (isDark ? 'text-emerald-400 font-bold' : 'text-emerald-600 font-bold')
+      : (isDark ? 'text-rose-400 font-bold' : 'text-rose-600 font-bold');
+
+  // Color consistente para valores de referencia (YoY/WoW) vs el valor actual: si el
+  // actual está por debajo de la referencia = rojo (bajó), si está igual o por encima = verde.
+  // Si no hay referencia (0/null/undefined) se muestra en gris neutro, sin semáforo engañoso.
+  const varClass = (current: number, reference: number | null | undefined) => {
+    if (!reference) return isDark ? 'text-slate-500' : 'text-slate-400';
+    return current >= reference
+      ? (isDark ? 'text-emerald-400 font-bold' : 'text-emerald-600 font-bold')
+      : (isDark ? 'text-rose-400 font-bold' : 'text-rose-600 font-bold');
+  };
+
   const filteredCampaigns = useMemo(() => {
     let list = CAMPAIGNS_DATA;
 
@@ -277,6 +294,11 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
   const clicsVarYoyPct = totalClicsYoy ? ((totalClics - totalClicsYoy) / totalClicsYoy) * 100 : 0;
   const clicsVarWowPct = totalClicsWow ? ((totalClics - totalClicsWow) / totalClicsWow) * 100 : 0;
 
+  const ctrVarYoyPct = ctrPromedioYoy ? ((ctrPromedio - ctrPromedioYoy) / ctrPromedioYoy) * 100 : 0;
+  const ctrVarWowPct = ctrPromedioWow ? ((ctrPromedio - ctrPromedioWow) / ctrPromedioWow) * 100 : 0;
+  const roasVarYoyPct = roasPromedioYoy ? ((roasPromedio - roasPromedioYoy) / roasPromedioYoy) * 100 : 0;
+  const roasVarWowPct = roasPromedioWow ? ((roasPromedio - roasPromedioWow) / roasPromedioWow) * 100 : 0;
+
   const spendPorPlataforma = useMemo(() => {
     const acc: Record<string, { actual: number; yoy: number }> = { Google: { actual: 0, yoy: 0 }, Meta: { actual: 0, yoy: 0 } };
     CAMPAIGNS_DATA.forEach((c) => {
@@ -356,13 +378,13 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
           <div className="mt-2.5 pt-2 border-t border-slate-200 dark:border-[#2C2C2E] flex flex-col gap-1 text-[11px] font-semibold">
             <span className="text-slate-600 dark:text-slate-400 flex items-center justify-between">
               YoY: ${(totalGastoYoy / 1000000).toFixed(1)}M 
-              <span className={gastoVarYoyPct <= 0 ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-rose-600 dark:text-rose-400 font-bold'}>
+              <span className={pctColor(gastoVarYoyPct)}>
                 {gastoVarYoyPct >= 0 ? '+' : ''}{gastoVarYoyPct.toFixed(1)}%
               </span>
             </span>
             <span className="text-blue-600 dark:text-blue-400 flex items-center justify-between">
               WoW: ${(totalGastoWow / 1000000).toFixed(1)}M 
-              <span>{gastoVarWowPct >= 0 ? '+' : ''}{gastoVarWowPct.toFixed(1)}%</span>
+              <span className={pctColor(gastoVarWowPct)}>{gastoVarWowPct >= 0 ? '+' : ''}{gastoVarWowPct.toFixed(1)}%</span>
             </span>
             {pptoMarketing > 0 ? (
               <span
@@ -370,7 +392,7 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
                 title="Presupuesto prorrateado por día según el rango de fechas filtrado"
               >
                 Ppto: ${(pptoMarketing / 1000000).toFixed(1)}M
-                <span className={gastoVarPptoPct <= 0 ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-rose-600 dark:text-rose-400 font-bold'}>
+                <span className={pctColor(gastoVarPptoPct)}>
                   {gastoVarPptoPct >= 0 ? '+' : ''}{gastoVarPptoPct.toFixed(1)}%
                 </span>
               </span>
@@ -402,13 +424,13 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
           <div className="mt-2.5 pt-2 border-t border-slate-200 dark:border-[#2C2C2E] flex flex-col gap-1 text-[11px] font-semibold">
             <span className="text-slate-600 dark:text-slate-400 flex items-center justify-between">
               YoY: {(totalImpresionesYoy / 1000000).toFixed(2)}M 
-              <span className={impVarYoyPct >= 0 ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-slate-500 dark:text-slate-400'}>
+              <span className={pctColor(impVarYoyPct)}>
                 {impVarYoyPct >= 0 ? '+' : ''}{impVarYoyPct.toFixed(1)}%
               </span>
             </span>
             <span className="text-blue-600 dark:text-blue-400 flex items-center justify-between">
               WoW: {(totalImpresionesWow / 1000).toFixed(0)}K 
-              <span>{impVarWowPct >= 0 ? '+' : ''}{impVarWowPct.toFixed(1)}%</span>
+              <span className={pctColor(impVarWowPct)}>{impVarWowPct >= 0 ? '+' : ''}{impVarWowPct.toFixed(1)}%</span>
             </span>
           </div>
         </div>
@@ -433,13 +455,13 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
           <div className="mt-2.5 pt-2 border-t border-slate-200 dark:border-[#2C2C2E] flex flex-col gap-1 text-[11px] font-semibold">
             <span className="text-slate-600 dark:text-slate-400 flex items-center justify-between">
               YoY: {(totalClicsYoy / 1000).toFixed(1)}K 
-              <span className={clicsVarYoyPct >= 0 ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-slate-500 dark:text-slate-400'}>
+              <span className={pctColor(clicsVarYoyPct)}>
                 {clicsVarYoyPct >= 0 ? '+' : ''}{clicsVarYoyPct.toFixed(1)}%
               </span>
             </span>
             <span className="text-blue-600 dark:text-blue-400 flex items-center justify-between">
               WoW: {(totalClicsWow / 1000).toFixed(1)}K 
-              <span>{clicsVarWowPct >= 0 ? '+' : ''}{clicsVarWowPct.toFixed(1)}%</span>
+              <span className={pctColor(clicsVarWowPct)}>{clicsVarWowPct >= 0 ? '+' : ''}{clicsVarWowPct.toFixed(1)}%</span>
             </span>
           </div>
         </div>
@@ -463,10 +485,12 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
           </div>
           <div className="mt-2.5 pt-2 border-t border-slate-200 dark:border-[#2C2C2E] flex flex-col gap-1 text-[11px] font-semibold">
             <span className="text-slate-600 dark:text-slate-400 flex items-center justify-between">
-              YoY: <span>{ctrPromedioYoy.toFixed(2)}%</span>
+              YoY: {ctrPromedioYoy.toFixed(2)}%
+              <span className={pctColor(ctrVarYoyPct)}>{ctrVarYoyPct >= 0 ? '+' : ''}{ctrVarYoyPct.toFixed(1)}%</span>
             </span>
             <span className="text-blue-600 dark:text-blue-400 flex items-center justify-between">
-              WoW: <span>{ctrPromedioWow.toFixed(2)}%</span>
+              WoW: {ctrPromedioWow.toFixed(2)}%
+              <span className={pctColor(ctrVarWowPct)}>{ctrVarWowPct >= 0 ? '+' : ''}{ctrVarWowPct.toFixed(1)}%</span>
             </span>
           </div>
         </div>
@@ -490,10 +514,12 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
           </div>
           <div className="mt-2.5 pt-2 border-t border-slate-200 dark:border-[#2C2C2E] flex flex-col gap-1 text-[11px] font-semibold">
             <span className="text-slate-600 dark:text-slate-400 flex items-center justify-between">
-              YoY: <span>{roasPromedioYoy.toFixed(2)}x</span>
+              YoY: {roasPromedioYoy.toFixed(2)}x
+              <span className={pctColor(roasVarYoyPct)}>{roasVarYoyPct >= 0 ? '+' : ''}{roasVarYoyPct.toFixed(1)}%</span>
             </span>
             <span className="text-blue-600 dark:text-blue-400 flex items-center justify-between">
-              WoW: <span>{roasPromedioWow.toFixed(2)}x</span>
+              WoW: {roasPromedioWow.toFixed(2)}x
+              <span className={pctColor(roasVarWowPct)}>{roasVarWowPct >= 0 ? '+' : ''}{roasVarWowPct.toFixed(1)}%</span>
             </span>
           </div>
         </div>
@@ -530,14 +556,10 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
                   </div>
                 </div>
                 <div className="text-right">
-                  <span className={`text-xs font-black block ${
-                    googleVarPct <= 0 
-                      ? (isDark ? 'text-emerald-400' : 'text-emerald-700') 
-                      : (isDark ? 'text-rose-400' : 'text-rose-700')
-                  }`}>
+                  <span className={`text-xs block ${pctColor(googleVarPct)}`}>
                     {googleVarPct >= 0 ? '+' : ''}{googleVarPct.toFixed(1)}% VAR
                   </span>
-                  <span className="text-[10px] text-slate-600 dark:text-slate-400 font-medium">
+                  <span className="text-[10px] text-slate-600 dark:text-slate-400 font-semibold">
                     YoY: {fmtMoney(googleSpendYoy)}
                   </span>
                 </div>
@@ -562,14 +584,10 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
                   </div>
                 </div>
                 <div className="text-right">
-                  <span className={`text-xs font-black block ${
-                    metaVarPct <= 0 
-                      ? (isDark ? 'text-emerald-400' : 'text-emerald-700') 
-                      : (isDark ? 'text-rose-400' : 'text-rose-700')
-                  }`}>
+                  <span className={`text-xs block ${pctColor(metaVarPct)}`}>
                     {metaVarPct >= 0 ? '+' : ''}{metaVarPct.toFixed(1)}% VAR
                   </span>
-                  <span className="text-[10px] text-slate-600 dark:text-slate-400 font-medium">
+                  <span className="text-[10px] text-slate-600 dark:text-slate-400 font-semibold">
                     YoY: {fmtMoney(metaSpendYoy)}
                   </span>
                 </div>
@@ -847,29 +865,37 @@ export const MarketingCampaignsView: React.FC<Props> = ({ theme }) => {
                       {/* Inversión sin decimales */}
                       <td className={`py-3 px-4 text-right font-bold whitespace-nowrap ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
                         <span>{fmtMoney(getGasto(c))}</span>
-                        <span className="text-[10px] block text-slate-700 dark:text-slate-300 font-medium">
-                          YoY: {fmtMoney(c.gastoYoy ?? 0)} | WoW: {fmtMoney(c.gastoWow ?? 0)}
+                        <span className="text-[10px] block font-medium">
+                          <span className={varClass(getGasto(c), c.gastoYoy ?? 0)}>YoY: {fmtMoney(c.gastoYoy ?? 0)}</span>
+                          <span className={isDark ? 'text-slate-600' : 'text-slate-300'}> | </span>
+                          <span className={varClass(getGasto(c), c.gastoWow ?? 0)}>WoW: {fmtMoney(c.gastoWow ?? 0)}</span>
                         </span>
                       </td>
 
                       <td className="py-3 px-4 text-right font-semibold whitespace-nowrap">
                         <span>{getClics(c).toLocaleString('es-CL')}</span>
-                        <span className={`text-[10px] block font-medium ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
-                          YoY: {(c.clicsYoy ?? 0).toLocaleString('es-CL')} | WoW: {(c.clicsWow ?? 0).toLocaleString('es-CL')}
+                        <span className="text-[10px] block font-medium">
+                          <span className={varClass(getClics(c), c.clicsYoy ?? 0)}>YoY: {(c.clicsYoy ?? 0).toLocaleString('es-CL')}</span>
+                          <span className={isDark ? 'text-slate-600' : 'text-slate-300'}> | </span>
+                          <span className={varClass(getClics(c), c.clicsWow ?? 0)}>WoW: {(c.clicsWow ?? 0).toLocaleString('es-CL')}</span>
                         </span>
                       </td>
 
                       <td className="py-3 px-4 text-right font-semibold whitespace-nowrap">
                         <span>{getCtr(c).toFixed(1)}%</span>
-                        <span className={`text-[10px] block font-medium ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
-                          YoY: {(c.ctrYoy ?? 0).toFixed(1)}% | WoW: {(c.ctrWow ?? 0).toFixed(1)}%
+                        <span className="text-[10px] block font-medium">
+                          <span className={varClass(getCtr(c), c.ctrYoy ?? 0)}>YoY: {(c.ctrYoy ?? 0).toFixed(1)}%</span>
+                          <span className={isDark ? 'text-slate-600' : 'text-slate-300'}> | </span>
+                          <span className={varClass(getCtr(c), c.ctrWow ?? 0)}>WoW: {(c.ctrWow ?? 0).toFixed(1)}%</span>
                         </span>
                       </td>
 
                       <td className={`py-3 px-4 text-right font-extrabold whitespace-nowrap ${isDark ? 'text-purple-400' : 'text-purple-700'}`}>
                         <span>{getRoas(c).toFixed(2)}x</span>
-                        <span className={`text-[10px] block font-medium ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
-                          YoY: {(c.roasYoy ?? 0).toFixed(2)}x | WoW: {(c.roasWow ?? 0).toFixed(2)}x
+                        <span className="text-[10px] block font-medium">
+                          <span className={varClass(getRoas(c), c.roasYoy ?? 0)}>YoY: {(c.roasYoy ?? 0).toFixed(2)}x</span>
+                          <span className={isDark ? 'text-slate-600' : 'text-slate-300'}> | </span>
+                          <span className={varClass(getRoas(c), c.roasWow ?? 0)}>WoW: {(c.roasWow ?? 0).toFixed(2)}x</span>
                         </span>
                       </td>
                     </tr>

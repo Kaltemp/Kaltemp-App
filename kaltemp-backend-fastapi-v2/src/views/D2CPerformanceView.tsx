@@ -599,7 +599,11 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
                     <td className="p-3 font-extrabold">{catNombre}</td>
                     <td className="p-3 text-right font-bold">${inv.toLocaleString('es-CL')}</td>
                     <td className={`p-3 text-right ${subtextColor}`}>${invYoy.toLocaleString('es-CL')}</td>
-                    <td className={`p-3 text-right font-extrabold ${invVarPct >= 0 ? titleEmerald : titleRose}`}>
+                    {/* Inversión es un COSTO, no un ingreso: invertir más que el año
+                        pasado se pinta rojo, invertir menos se pinta verde -- criterio
+                        invertido respecto a VAR % (VENTA), igual que ya usan la tarjeta
+                        KPI "Inversión MKT" (mktVarPct) y "Tacos" (tacosDiff) más arriba. */}
+                    <td className={`p-3 text-right font-extrabold ${invVarPct <= 0 ? titleEmerald : titleRose}`}>
                       {invVarPct >= 0 ? '+' : ''}{invVarPct.toFixed(1)}%
                     </td>
                     <td className={`p-3 text-right font-black ${titleBlue}`}>${vta.toLocaleString('es-CL')}</td>
@@ -618,7 +622,7 @@ export const D2CPerformanceView: React.FC<Props> = ({ theme }) => {
                 <td className="p-3 font-black">TOTAL GENERAL</td>
                 <td className="p-3 text-right font-black">${categoryTotals.inv.toLocaleString('es-CL')}</td>
                 <td className={`p-3 text-right ${subtextColor}`}>${categoryTotals.invYoy.toLocaleString('es-CL')}</td>
-                <td className={`p-3 text-right font-black ${categoryTotals.invVarPct >= 0 ? titleEmerald : titleRose}`}>
+                <td className={`p-3 text-right font-black ${categoryTotals.invVarPct <= 0 ? titleEmerald : titleRose}`}>
                   {categoryTotals.invVarPct >= 0 ? '+' : ''}{categoryTotals.invVarPct.toFixed(1)}%
                 </td>
                 <td className={`p-3 text-right font-black ${titleBlue}`}>${categoryTotals.vta.toLocaleString('es-CL')}</td>

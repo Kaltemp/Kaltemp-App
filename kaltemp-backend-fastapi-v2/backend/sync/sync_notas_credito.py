@@ -98,6 +98,20 @@ esa no es la fecha en la que realmente se creó el documento. Ahora:
                        fecha declarada/backdateada que cuenta para el SII)
     FECHA_CAIDA       = document.rcofDate       -> se mantiene igual, para
                        el cálculo de DIAS_DESFASE (emisión vs registro RCOF)
+
+CORREGIDO (19-ago-2026, bug real confirmado junto con el mismo bug en
+sync_ga4_kaltemp.py -- ver hallazgo en sync_admin.py): el guardado en
+DuckDB hacía DROP TABLE + CREATE TABLE completo, usando SOLO las notas
+de crédito de la ventana [fecha_desde, hoy] recién consultada. El botón
+"Actualizar Ahora (últimos 30 días)" del panel web ("Motor de
+Actualización") le pasa dias_atras=30 a esta función igual que a
+cualquier otra que acepte ese parámetro -- así que borraba TODA la tabla
+y la dejaba solo con notas de crédito de los últimos 30 días. La razón
+original del DROP+CREATE (comentario más abajo) era una migración de
+esquema puntual que ya ocurrió -- ahora se usa CREATE TABLE IF NOT
+EXISTS + DELETE del rango [fecha_desde, hoy] + INSERT, igual que ya
+corrige este mismo problema en sync_temperaturas.py: la ventana
+consultada se refresca, el resto del histórico queda intacto.
 """
 import os
 import re
@@ -331,23 +345,22 @@ def sync_notas_credito(dias_atras: int = None, progress_callback=None):
             print(f"  {procesadas} notas de crédito procesadas...")
 
     print(f"[{datetime.now()}] {revisadas} devoluciones revisadas en total "
-          f"({descartadas_por_fecha} descartadas por estar antes de {FECHA_DESDE_STR})")
+          f"({descartadas_por_fecha} descartadas por estar antes de {fecha_desde_dt.date()})")
     print(f"[{datetime.now()}] {len(filas)} notas de crédito con fecha RCOF resuelta "
           f"({con_referencia} con documento original identificado: {via_ted} vía ted, {via_doctype} vía document_type)")
 
     con = duckdb.connect(DB_PATH, read_only=False)
     try:
-        # FIX (15-ago-2026, a pedido de William -- ver auditoría del chat):
-        # antes esto era DROP TABLE + CREATE, así que una corrida con
-        # dias_atras chico (ej. 5 días para un reproceso puntual) BORRABA
-        # TODO el historial de notas de crédito y lo reemplazaba solo por
-        # lo que se acababa de descargar (5 días). Ahora: la tabla se crea
-        # una sola vez con el esquema completo (incluye DOCUMENTO_REFERENCIA),
-        # y cada corrida solo borra + reinserta la VENTANA de fechas que se
-        # está re-sincronizando -- mismo patrón ya usado en sync_leads.py.
-        # Si una tabla de una corrida MUY vieja (antes del 11-ago-2026) no
-        # tiene la columna DOCUMENTO_REFERENCIA, se migra una sola vez acá
-        # sin perder las filas existentes.
+        # CORREGIDO (19-ago-2026): antes era DROP TABLE + CREATE TABLE
+        # completo en cada corrida (la razón original era una migración
+        # de esquema puntual -- columna DOCUMENTO_REFERENCIA nueva -- que
+        # ya ocurrió hace tiempo). Eso hacía que pedir una ventana chica
+        # (dias_atras=30, ej. desde "Actualizar Ahora" del panel web)
+        # borrara TODA la tabla y la dejara solo con notas de crédito de
+        # los últimos 30 días. Ahora se crea la tabla solo si no existe, y
+        # se borra/reinserta SOLO el rango [fecha_desde, hoy] que
+        # realmente se volvió a consultar -- el resto del histórico queda
+        # intacto sin importar qué tan chico sea dias_atras.
         con.execute("""
             CREATE TABLE IF NOT EXISTS notas_credito_desfase (
                 DOCUMENTO VARCHAR, DOCUMENTO_REFERENCIA VARCHAR, CLIENTE VARCHAR,
@@ -356,15 +369,9 @@ def sync_notas_credito(dias_atras: int = None, progress_callback=None):
                 DIAS_DESFASE INTEGER, MONTO DOUBLE, ALERTA BOOLEAN
             )
         """)
-        cols_existentes = {r[0].upper() for r in con.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = 'notas_credito_desfase'"
-        ).fetchall()}
-        if "DOCUMENTO_REFERENCIA" not in cols_existentes:
-            con.execute("ALTER TABLE notas_credito_desfase ADD COLUMN DOCUMENTO_REFERENCIA VARCHAR")
-
         con.execute(
-            "DELETE FROM notas_credito_desfase WHERE CAST(FECHA_EMISION AS DATE) >= CAST(? AS DATE)",
-            [fecha_desde_dt.date()],
+            "DELETE FROM notas_credito_desfase WHERE FECHA_EMISION >= ?",
+            [fecha_desde_dt.replace(tzinfo=None)],
         )
         con.executemany(
             """INSERT INTO notas_credito_desfase
@@ -381,7 +388,7 @@ def sync_notas_credito(dias_atras: int = None, progress_callback=None):
             ["notas_credito_desfase", datetime.now(timezone.utc)],
         )
         con.commit()
-        print(f"[{datetime.now()}] ✅ notas_credito_desfase actualizada ({len(filas)} filas)")
+        print(f"[{datetime.now()}] ✅ notas_credito_desfase actualizada ({len(filas)} filas, ventana desde {fecha_desde_dt.date()})")
     finally:
         con.close()
 

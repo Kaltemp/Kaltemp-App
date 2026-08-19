@@ -1,7 +1,24 @@
+# ============================================================
+# ARCHIVO: sync_master.py
+# GUARDAR EN: C:\kaltemp_app\kaltemp-backend-fastapi-v2\backend\sync\sync_master.py
+# (Respaldar el actual antes de reemplazar: Copy-Item sync_master.py sync_master.py.bak2)
+# ============================================================
+
 """
 sync/sync_master.py — Motor de actualización maestro único.
 Orquesta todos los scripts de sync en el orden correcto, con manejo de
 errores por paso y resumen final.
+
+AGREGADO (18-ago-2026): paso "ventas_full" -- sincroniza fulfillment de
+Mercado Libre/Paris/Ripley desde los consumos de bodega "Full MKP"
+(ver sync_ventas_full.py). Va INMEDIATAMENTE DESPUÉS de "ventas" porque
+usa el mismo mapa de categorías (sku_maestro + categorias_manual) y
+escribe en la misma tabla `ventas` -- no depende de nada más.
+
+NOTA (19-ago-2026, William + Claude, reconciliación proyecto vs. servidor
+real): esta copia refleja el archivo que efectivamente corre en el
+servidor (confirmado subiendo el archivo real) -- la versión que estaba
+guardada en el proyecto antes de hoy no incluía el paso "ventas_full".
 """
 import sys
 import os
@@ -13,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sync_temperaturas import sync_temperaturas  # noqa: E402
 from sync_sku_maestro import sync_sku_maestro  # noqa: E402
 from sync_ventas import sync_ventas  # noqa: E402
+from sync_ventas_full import sync_ventas_full  # noqa: E402
 from sync_leads import sync_leads  # noqa: E402
 from sync_abandoned_carts import sync_abandoned_carts  # noqa: E402
 from sync_marketing import sync_marketing  # noqa: E402
@@ -31,6 +49,7 @@ PASOS = [
     ("temperaturas", sync_temperaturas),
     ("sku_maestro", sync_sku_maestro),
     ("ventas", lambda: sync_ventas(dias_atras=30)),
+    ("ventas_full", lambda: sync_ventas_full(dias_atras=10)),
     ("leads", sync_leads),
     ("abandoned_checkouts", sync_abandoned_carts),
     ("marketing", sync_marketing),

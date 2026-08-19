@@ -40,6 +40,20 @@ Uso:
     export DUCKDB_PATH=/ruta/a/kaltemp_matrix.duckdb
     export PXD_FECHA_DESDE=2026-01-01
     python sync_pendientes_documentos.py
+
+CORREGIDO (19-ago-2026, mismo bug real que sync_ga4_kaltemp.py /
+sync_notas_credito.py -- ver hallazgo en sync_admin.py): el guardado en
+DuckDB hacía DROP TABLE + CREATE TABLE completo, usando SOLO los
+documentos de la ventana [fecha_desde, hoy] recién consultada. Esta
+tabla es justo la que MÁS depende de mantener historial largo (su propio
+propósito, arriba, es rastrear pendientes de hasta 2 años de antigüedad)
+-- así que el botón "Actualizar Ahora (últimos 30 días)" del panel web
+(dias_atras=30) era especialmente destructivo acá: borraba la tabla
+entera y perdía justo los pendientes más antiguos, que son los que más
+importa no perder de vista. Ahora se usa CREATE TABLE IF NOT EXISTS +
+DELETE del rango [fecha_desde, hoy] + INSERT -- los documentos emitidos
+antes de esa ventana quedan intactos sin importar qué tan chico sea
+dias_atras.
 """
 import os
 import sys
@@ -264,15 +278,24 @@ def sync_pendientes_documentos(dias_atras: int = None, progress_callback=None):
 
     con = duckdb.connect(DB_PATH, read_only=False)
     try:
-        con.execute("DROP TABLE IF EXISTS pendientes_despacho_docs")
         con.execute("""
-            CREATE TABLE pendientes_despacho_docs (
+            CREATE TABLE IF NOT EXISTS pendientes_despacho_docs (
                 SKU VARCHAR, DESCRIPCION VARCHAR, DOCUMENTO VARCHAR, TIPO_DOCUMENTO VARCHAR,
                 CLIENTE VARCHAR, VENDEDOR VARCHAR, BODEGA VARCHAR,
                 FECHA_EMISION TIMESTAMP, MONTO_DOCUMENTO DOUBLE, CANTIDAD DOUBLE,
                 PEDIDO_NUMERO VARCHAR, PEDIDO_ORIGEN VARCHAR
             )
         """)
+        # CORREGIDO (19-ago-2026): antes era DROP+CREATE completo -- ver
+        # nota arriba, era el caso más grave porque esta tabla vive de
+        # tener pendientes de hasta ~2 años. Ahora se borra/reinserta
+        # SOLO el rango [fecha_desde, hoy] que realmente se volvió a
+        # consultar a Bsale -- los documentos emitidos antes de esa
+        # ventana quedan intactos.
+        con.execute(
+            "DELETE FROM pendientes_despacho_docs WHERE FECHA_EMISION >= ?",
+            [fecha_desde_dt.replace(tzinfo=None)],
+        )
         con.executemany(
             """INSERT INTO pendientes_despacho_docs
                (SKU, DESCRIPCION, DOCUMENTO, TIPO_DOCUMENTO, CLIENTE, VENDEDOR, BODEGA,
@@ -288,7 +311,7 @@ def sync_pendientes_documentos(dias_atras: int = None, progress_callback=None):
             ["pendientes_despacho_docs", datetime.now(timezone.utc)],
         )
         con.commit()
-        print(f"[{datetime.now()}] ✅ pendientes_despacho_docs actualizada ({len(filas)} filas)")
+        print(f"[{datetime.now()}] ✅ pendientes_despacho_docs actualizada ({len(filas)} filas, ventana desde {fecha_desde_dt.date()})")
     finally:
         con.close()
 

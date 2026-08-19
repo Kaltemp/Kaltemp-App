@@ -72,9 +72,14 @@ export const SkuSalesView: React.FC<Props> = ({ theme }) => {
   const [chanSortDir, setChanSortDir] = useState<'asc' | 'desc'>('desc');
 
   const [channelsData, setChannelsData] = useState<ChannelItem[]>([]);
-  const [categoryChartData, setCategoryChartData] = useState<{ name: string; value: number; color?: string }[]>([]);
+  const [categoryChartData, setCategoryChartData] = useState<{ name: string; value: number; valueAnterior: number; yoyPct: number | null }[]>([]);
+  const [anioActual, setAnioActual] = useState<number | null>(null);
+  const [anioAnterior, setAnioAnterior] = useState<number | null>(null);
 
-  const CHART_COLORS = ['#0A84FF', '#30D158', '#FF9F0A', '#BF5AF2', '#FF453A', '#64D2FF', '#FFD60A', '#FF6482'];
+  // Color por AÑO (no por categoría) -- gris = año anterior, azul = año actual,
+  // igual que el gráfico de referencia en Power BI.
+  const COLOR_ANTERIOR = isDark ? '#636366' : '#94A3B8';
+  const COLOR_ACTUAL = isDark ? '#0A84FF' : '#4F46E5';
 
   useEffect(() => {
     fetchSkuCanalResumen(startDate, endDate, vendedoresParaBackend, categoriasParaBackend)
@@ -84,8 +89,17 @@ export const SkuSalesView: React.FC<Props> = ({ theme }) => {
       .catch(() => setChannelsData([]));
 
     fetchSkuCategoriaResumen(startDate, endDate, vendedoresParaBackend, canalesParaBackend)
-      .then((data) => setCategoryChartData(Array.isArray(data) ? data.map((d, i) => ({ ...d, color: CHART_COLORS[i % CHART_COLORS.length] })) : []))
-      .catch(() => setCategoryChartData([]));
+      .then((data: any) => {
+        const categorias = Array.isArray(data?.categorias) ? data.categorias : [];
+        setCategoryChartData(categorias);
+        setAnioActual(data?.anioActual ?? null);
+        setAnioAnterior(data?.anioAnterior ?? null);
+      })
+      .catch(() => {
+        setCategoryChartData([]);
+        setAnioActual(null);
+        setAnioAnterior(null);
+      });
   }, [startDate, endDate, JSON.stringify(vendedoresParaBackend), JSON.stringify(canalesParaBackend), JSON.stringify(categoriasParaBackend)]);
 
   const toggleExpandP = (p: SkuNode) => {
@@ -205,6 +219,81 @@ export const SkuSalesView: React.FC<Props> = ({ theme }) => {
   const formatPct = (val?: number) => {
     if (val === undefined || val === null) return '-';
     return `${val.toFixed(1)}%`;
+  };
+
+  // Ancho aproximado de un texto en px (heurística rápida para decidir si la
+  // etiqueta cabe DENTRO de la barra o hay que sacarla afuera) -- ver
+  // references/marks-and-anatomy.md del skill dataviz: "measure first, never
+  // clip -- si no entra con margen a ambos lados, sale afuera pegada a la punta".
+  const estimateTextWidth = (text: string, fontSize = 10) => text.length * fontSize * 0.62;
+
+  // Ink usado cuando la etiqueta queda AFUERA de la barra (sobre el fondo de
+  // la tarjeta, no sobre el relleno de color) -- mismo tono que el resto de
+  // textos primarios del panel.
+  const outsideInk = isDark ? '#F5F5F7' : '#1e293b';
+
+  // Etiqueta de la barra "año anterior" (gris): ancla el valor a la PUNTA de
+  // la barra -- adentro (blanco en modo oscuro / ink en modo claro, para que
+  // se lea sobre el relleno gris) si el texto entra con margen; si no, afuera
+  // pegado a la punta. Con barGap=2 esta barra queda pegada a la del año
+  // actual, así ambas leen como UNA sola fila por categoría dividida en 2
+  // segmentos de color, con su propia etiqueta cada una -- igual al diseño
+  // de referencia en Power BI.
+  const renderAnteriorBarLabel = (props: any) => {
+    const { x, y, width, height, index } = props;
+    const item = categoryChartData[index];
+    if (!item) return null;
+    const formatted = `$${item.valueAnterior.toFixed(1)} M`;
+    const textW = estimateTextWidth(formatted);
+    const fitsInside = width >= textW + 12;
+    const tx = fitsInside ? x + width - 6 : x + width + 6;
+    const insideColor = isDark ? '#F5F5F7' : '#1e293b';
+    return (
+      <text
+        x={tx}
+        y={y + height / 2 + 3}
+        textAnchor={fitsInside ? 'end' : 'start'}
+        fontSize={10}
+        fontWeight="bold"
+        fill={fitsInside ? insideColor : outsideInk}
+      >
+        {formatted}
+      </text>
+    );
+  };
+
+  // Etiqueta de la barra "año actual" (azul): mismo criterio adentro/afuera
+  // para el monto (texto blanco si queda adentro -- el azul es oscuro en
+  // ambos modos), y a continuación -- siempre afuera, es un indicador de
+  // variación, no un valor de la barra -- la var% YoY con flecha ▲/▼.
+  const renderActualBarLabel = (props: any) => {
+    const { x, y, width, height, index } = props;
+    const item = categoryChartData[index];
+    if (!item) return null;
+    const formatted = `$${item.value.toFixed(1)} M`;
+    const textW = estimateTextWidth(formatted);
+    const fitsInside = width >= textW + 12;
+    const valueX = fitsInside ? x + width - 6 : x + width + 6;
+    const cy = y + height / 2 + 3;
+
+    const tieneYoy = item.yoyPct !== null && item.yoyPct !== undefined;
+    const isPositive = tieneYoy && (item.yoyPct as number) >= 0;
+    const pctColor = !tieneYoy ? (isDark ? '#8E8E93' : '#64748b') : isPositive ? '#30D158' : '#FF453A';
+    const yoyText = tieneYoy ? `${isPositive ? '▲' : '▼'} ${Math.abs(item.yoyPct as number).toFixed(1)}%` : null;
+    const yoyX = fitsInside ? x + width + 6 : valueX + textW + 10;
+
+    return (
+      <g>
+        <text x={valueX} y={cy} textAnchor={fitsInside ? 'end' : 'start'} fontSize={10} fontWeight="bold" fill={fitsInside ? '#ffffff' : outsideInk}>
+          {formatted}
+        </text>
+        {yoyText && (
+          <text x={yoyX} y={cy} textAnchor="start" fontSize={9} fontWeight="bold" fill={pctColor}>
+            {yoyText}
+          </text>
+        )}
+      </g>
+    );
   };
 
   // Estilos de Apple HIG para Fondos y Títulos
@@ -406,19 +495,32 @@ export const SkuSalesView: React.FC<Props> = ({ theme }) => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         {/* Left Column: Bar Chart */}
         <div className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between ${panelBg}`}>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-1">
             <h3 className={`text-xs font-black uppercase tracking-wider ${titleBlue}`}>
               🏷️ VENTA TOTAL POR CATEGORÍA ($ MILLONES)
             </h3>
             <span className={`text-[10px] font-medium ${subtextColor}`}>Haz clic en una barra para filtro cruzado</span>
           </div>
 
-          <div className="w-full" style={{ height: Math.max(256, categoryChartData.length * 38) }}>
+          <div className="flex items-center justify-center gap-4 mb-3">
+            <span className={`text-[10px] font-bold uppercase tracking-wider ${subtextColor}`}>Categoría</span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLOR_ANTERIOR }} />
+              <span className={`text-[10px] font-bold ${subtextColor}`}>{anioAnterior ?? '—'}</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLOR_ACTUAL }} />
+              <span className={`text-[10px] font-bold ${subtextColor}`}>{anioActual ?? '—'}</span>
+            </span>
+          </div>
+
+          <div className="w-full" style={{ height: Math.max(280, categoryChartData.length * 52) }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart layout="vertical" data={categoryChartData} margin={{ left: 8, right: 28 }}>
+              <BarChart layout="vertical" data={categoryChartData} margin={{ left: 8, right: 64 }} barGap={2} barCategoryGap="32%">
                 <XAxis type="number" stroke={isDark ? '#8E8E93' : '#64748b'} fontSize={10} unit="M" tickLine={false} />
                 <YAxis dataKey="name" type="category" stroke={isDark ? '#F5F5F7' : '#1e293b'} fontSize={10} width={150} interval={0} tickLine={false} />
                 <Tooltip
+                  formatter={(val: number) => `$ ${val.toFixed(1)} M`}
                   contentStyle={{
                     backgroundColor: isDark ? '#1C1C1E' : '#ffffff',
                     borderColor: isDark ? '#2C2C2E' : '#e2e8f0',
@@ -426,18 +528,34 @@ export const SkuSalesView: React.FC<Props> = ({ theme }) => {
                     borderRadius: '12px'
                   }}
                 />
-                <Bar
-                  dataKey="value"
-                  name="Venta ($M)"
-                  radius={[0, 4, 4, 0]}
-                  className="cursor-pointer"
-                >
+
+                {/* Barra año anterior -- gris, no clickeable. barGap=2 (spacer
+                    mínimo de superficie) la deja pegada a la del año actual para
+                    que ambas lean como UNA sola fila por categoría, dividida en
+                    2 segmentos de color -- igual al diseño de referencia en Power BI. */}
+                <Bar dataKey="valueAnterior" name={anioAnterior ? `${anioAnterior}` : 'Año anterior'} radius={[0, 4, 4, 0]} barSize={20}>
                   {categoryChartData.map((entry, index) => {
                     const isSelected = selectedCategory === entry.name;
                     return (
                       <Cell
-                        key={`cell-${index}`}
-                        fill={entry.color}
+                        key={`cell-ant-${index}`}
+                        fill={COLOR_ANTERIOR}
+                        opacity={selectedCategory !== 'Todas' ? (isSelected ? 0.9 : 0.25) : 0.9}
+                      />
+                    );
+                  })}
+                  <LabelList dataKey="valueAnterior" content={renderAnteriorBarLabel} />
+                </Bar>
+
+                {/* Barra año actual -- azul, clickeable para filtro cruzado, con
+                    etiqueta de monto (dentro del segmento cuando entra) + YoY% */}
+                <Bar dataKey="value" name={anioActual ? `${anioActual}` : 'Año actual'} radius={[0, 4, 4, 0]} className="cursor-pointer" barSize={20}>
+                  {categoryChartData.map((entry, index) => {
+                    const isSelected = selectedCategory === entry.name;
+                    return (
+                      <Cell
+                        key={`cell-act-${index}`}
+                        fill={COLOR_ACTUAL}
                         opacity={selectedCategory !== 'Todas' ? (isSelected ? 1 : 0.35) : 1}
                         stroke={isSelected ? '#ffffff' : undefined}
                         strokeWidth={isSelected ? 2 : 0}
@@ -446,7 +564,7 @@ export const SkuSalesView: React.FC<Props> = ({ theme }) => {
                       />
                     );
                   })}
-                  <LabelList dataKey="value" position="right" fill={isDark ? '#EDEDED' : '#1e293b'} fontSize={10} fontWeight="bold" formatter={(val: number) => `$${val.toFixed(1)} M`} />
+                  <LabelList dataKey="value" content={renderActualBarLabel} />
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -505,10 +623,10 @@ export const SkuSalesView: React.FC<Props> = ({ theme }) => {
                           {c.yoy !== null ? `$ ${c.yoy.toFixed(1).replace('.', ',')} M` : '—'}
                         </td>
                         <td className={`p-2.5 text-right font-black ${
-                          c.yoyPct === null 
-                            ? subtextColor 
-                            : isPositive 
-                            ? (isDark ? 'text-emerald-400' : 'text-emerald-700') 
+                          c.yoyPct === null
+                            ? subtextColor
+                            : isPositive
+                            ? (isDark ? 'text-emerald-400' : 'text-emerald-700')
                             : (isDark ? 'text-rose-400' : 'text-rose-700')
                         }`}>
                           {c.yoyPct === null ? 'Sin dato AA' : `${c.yoyPct.toFixed(1).replace('.', ',')}%`}

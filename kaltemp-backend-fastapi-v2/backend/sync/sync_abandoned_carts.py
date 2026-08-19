@@ -21,6 +21,17 @@ CORREGIDO (11-ago-2026, 3 bugs reales confirmados con diagnóstico):
    quedaba -- dejando la tabla vacía sin ningún aviso visible más allá
    de un print(). Ahora, si la descarga no fue exitosa, NO se toca la
    tabla (se conserva lo que había de la corrida anterior).
+
+CORREGIDO (19-ago-2026, mismo bug real que sync_ga4_kaltemp.py /
+sync_notas_credito.py -- ver hallazgo en sync_admin.py): el DELETE antes
+de insertar era un `DELETE FROM abandoned_checkouts` SIN condición --
+es decir, cada corrida borraba TODA la tabla (no solo lo fuera de la
+ventana consultada) y la dejaba solo con la ventana de dias_atras de esa
+corrida (default 60, o menos si el botón "Actualizar Ahora"/individual
+del panel web mandaba un dias_atras más chico, ej. 30). Ahora el DELETE
+solo alcanza el rango [fecha_desde, hoy] realmente vuelto a consultar a
+Shopify -- checkouts fuera de esa ventana (de una corrida anterior con
+una ventana más amplia) quedan intactos.
 """
 import os
 import time
@@ -147,11 +158,11 @@ def sync_abandoned_carts(progress_callback=None, dias_atras: int = None):
 
         id_checkout = str(c.get("id") or c.get("token") or "")
         fecha_obj = parsear_fecha(c.get("created_at") or c.get("updated_at"))
-        
+
         # Cliente / Contacto
         customer = c.get("customer") or {}
         email = str(c.get("email") or customer.get("email") or "Sin email").strip()
-        
+
         nombre_cli = ""
         if isinstance(customer, dict):
             fn = customer.get("first_name", "") or ""
@@ -161,7 +172,7 @@ def sync_abandoned_carts(progress_callback=None, dias_atras: int = None):
             nombre_cli = email if email != "Sin email" else "CLIENTE SHOPIFY"
 
         total_price = float(c.get("total_price") or c.get("subtotal_price") or 0.0)
-        
+
         # Estado: Recuperado si completed_at existe, de lo contrario Abandonado
         completed_at = c.get("completed_at")
         estado = "RECUPERADO" if completed_at else "ABANDONADO"
@@ -187,6 +198,8 @@ def sync_abandoned_carts(progress_callback=None, dias_atras: int = None):
 
     report(70, f"💾 Escribiendo {len(filas)} filas en 'abandoned_checkouts' de DuckDB...")
 
+    fecha_desde_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=dias_atras)
+
     with duckdb.connect(DB_FILE) as con:
         con.execute("""
             CREATE TABLE IF NOT EXISTS abandoned_checkouts (
@@ -195,19 +208,13 @@ def sync_abandoned_carts(progress_callback=None, dias_atras: int = None):
                 PRECIO_UNITARIO DOUBLE, TOTAL_PRICE DOUBLE, ESTADO VARCHAR
             )
         """)
-        # FIX (15-ago-2026, a pedido de William -- ver auditoría del chat):
-        # antes esto era `DELETE FROM abandoned_checkouts` SIN WHERE --
-        # borraba la tabla ENTERA y la dejaba con solo lo que se acababa
-        # de descargar (la ventana de dias_atras). Con dias_atras=30 (el
-        # que ya manda "Actualizar Ahora" hoy) esto ya estaba perdiendo
-        # cualquier carrito histórico más viejo. Ahora solo se borra +
-        # reinserta la ventana de fechas que efectivamente se volvió a
-        # descargar de Shopify -- el resto del histórico queda intacto.
-        fecha_corte = (datetime.now(timezone.utc) - timedelta(days=dias_atras)).date()
-        con.execute(
-            "DELETE FROM abandoned_checkouts WHERE CAST(FECHA_OBJ AS DATE) >= CAST(? AS DATE)",
-            [fecha_corte],
-        )
+        # CORREGIDO (19-ago-2026): antes era `DELETE FROM
+        # abandoned_checkouts` SIN condición -- borraba la tabla ENTERA
+        # en cada corrida, sin importar la ventana pedida. Ahora solo se
+        # borra el rango [fecha_desde, hoy] que realmente se volvió a
+        # consultar a Shopify -- checkouts de una corrida anterior con
+        # ventana más amplia, fuera de este rango, quedan intactos.
+        con.execute("DELETE FROM abandoned_checkouts WHERE FECHA_OBJ >= ?", [fecha_desde_dt])
         con.executemany(
             """INSERT INTO abandoned_checkouts
                (ID_CHECKOUT, FECHA_OBJ, CLIENTE, EMAIL, PRODUCTO, SKU, PRECIO_UNITARIO, TOTAL_PRICE, ESTADO)
@@ -222,7 +229,7 @@ def sync_abandoned_carts(progress_callback=None, dias_atras: int = None):
             ["abandoned_checkouts", datetime.now(timezone.utc).replace(tzinfo=None)]
         )
 
-    report(100, f"✨ Sincronización de Carritos Abandonados completa ({len(filas)} filas guardadas).")
+    report(100, f"✨ Sincronización de Carritos Abandonados completa ({len(filas)} filas guardadas, ventana desde {fecha_desde_dt.date()}).")
 
 
 if __name__ == "__main__":

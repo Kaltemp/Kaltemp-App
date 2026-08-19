@@ -10,9 +10,44 @@ from fastapi import APIRouter, Query
 from typing import Optional
 from db import get_connection
 import pandas as pd
+import re
 import unicodedata
 
 router = APIRouter(prefix="/api", tags=["channels"])
+
+
+def limpiar_numero(val) -> float:
+    """
+    Convierte valores de columnas numéricas (ej. "Gasto") que pueden venir
+    en formato chileno/europeo (punto = separador de miles, coma = decimal)
+    a float. Es la MISMA lógica que usa marketing.py (limpiar_numero) --
+    debe mantenerse igual acá para que "Inversión MKT" (Indicadores D2C)
+    calce con "Inversión Total" (Campañas de Marketing). Antes esta función
+    no existía en este archivo y se usaba pd.to_numeric() directo, que no
+    entiende el formato con puntos como separador de miles y produce totales
+    más bajos que los reales (valores mal parseados o descartados como NaN).
+    """
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+
+    val_str = str(val).strip()
+    val_str = re.sub(r'[^\d.,-]', '', val_str)
+    if not val_str:
+        return 0.0
+
+    if "." in val_str and "," in val_str:
+        val_str = val_str.replace(".", "").replace(",", ".")
+    elif "." in val_str and len(val_str.split(".")[-1]) == 3:
+        val_str = val_str.replace(".", "")
+    elif "," in val_str:
+        val_str = val_str.replace(",", ".")
+
+    try:
+        return float(val_str)
+    except Exception:
+        return 0.0
 
 
 SKUS_TOM_PALMER = [
@@ -191,13 +226,24 @@ def _gasto_marketing_por_categoria(
         col_campana = next((c for c in df.columns if "campa" in c.lower()), None)
         col_gasto = next((c for c in df.columns if "gasto" in c.lower()), None)
         col_fi = next((c for c in df.columns if "fecha inicio" in c.lower().replace("ó", "o")), None)
+        col_ff = next((c for c in df.columns if "fecha fin" in c.lower().replace("ó", "o")), None)
         col_marca = next((c for c in df.columns if c.lower() == "marca"), None)
         if not (col_campana and col_gasto and col_fi):
             continue
 
         df["_fecha"] = pd.to_datetime(df[col_fi], errors="coerce")
-        df["_gasto"] = pd.to_numeric(df[col_gasto], errors="coerce").fillna(0.0)
-        df_rango = df[(df["_fecha"] >= pd.Timestamp(fecha_inicio)) & (df["_fecha"] <= pd.Timestamp(fecha_fin))]
+        # Si no hay columna de fecha fin, se asume que la campaña dura un solo día
+        # (fecha_fin = fecha_inicio), igual que hace /api/marketing-campaigns.
+        df["_fecha_fin"] = pd.to_datetime(df[col_ff], errors="coerce") if col_ff else df["_fecha"]
+        df["_gasto"] = df[col_gasto].apply(limpiar_numero)
+        # IMPORTANTE: se usa el mismo criterio de "traslape de rango" que
+        # /api/marketing-campaigns (_filtrar_por_rango en marketing.py) --
+        # una campaña cuenta si [fecha_inicio, fecha_fin] se superpone con el
+        # rango consultado, no solo si "empieza" dentro de él. Antes esta
+        # función filtraba únicamente por fecha_inicio, lo que hacía que
+        # "Inversión MKT" en Indicadores D2C no calzara con "Inversión Total"
+        # en Campañas de Marketing para el mismo rango de fechas.
+        df_rango = df[(df["_fecha_fin"] >= pd.Timestamp(fecha_inicio)) & (df["_fecha"] <= pd.Timestamp(fecha_fin))]
         if col_marca and col_marca in df_rango.columns:
             df_rango = df_rango[df_rango[col_marca] == marca]
 
@@ -205,13 +251,21 @@ def _gasto_marketing_por_categoria(
             gasto = float(fila["_gasto"])
             nombre_campana = str(fila[col_campana]).strip()
             cat_camp = mapa_manual.get(nombre_campana) or _mapear_categoria_real(nombre_campana)
+            # Toda campaña que no matchea ninguna categoría conocida (ni por
+            # mapeo manual ni por palabra clave en el nombre) cae en
+            # "Sin Categoría" -- el mismo nombre que ya usa _ventas_d2c_periodo
+            # para ventas sin categoría, así se fusionan en una sola fila de
+            # la tabla en vez de perderse. Antes esas campañas SÍ sumaban al
+            # "_total" (la tarjeta INVERSIÓN MKT) pero no a ninguna categoría,
+            # por lo que el total de la tabla "Performance por Categoría"
+            # (TOTAL GENERAL) quedaba por debajo de la tarjeta.
+            cat_bucket = cat_camp or "Sin Categoría"
 
-            if categorias and cat_camp and not any(c.lower() == cat_camp.lower() for c in categorias):
+            if categorias and not any(c.lower() == cat_bucket.lower() for c in categorias):
                 continue
 
             resultado["_total"] += gasto
-            if cat_camp:
-                resultado[cat_camp] = resultado.get(cat_camp, 0.0) + gasto
+            resultado[cat_bucket] = resultado.get(cat_bucket, 0.0) + gasto
 
     return resultado
 
@@ -249,7 +303,7 @@ def _calcular_tendencia_semanal_d2c(
             continue
 
         df_mkt["_fecha"] = pd.to_datetime(df_mkt[col_fi], errors="coerce")
-        df_mkt["_gasto"] = pd.to_numeric(df_mkt[col_gasto], errors="coerce").fillna(0.0)
+        df_mkt["_gasto"] = df_mkt[col_gasto].apply(limpiar_numero)
 
         if col_marca and col_marca in df_mkt.columns:
             df_mkt = df_mkt[df_mkt[col_marca] == marca]
@@ -260,7 +314,8 @@ def _calcular_tendencia_semanal_d2c(
                 if dt.year in (anio_actual, anio_yoy):
                     nombre_campana = str(fila[col_campana]).strip() if col_campana else ""
                     cat_camp = mapa_manual.get(nombre_campana) or _mapear_categoria_real(nombre_campana)
-                    if categorias and cat_camp and not any(c.lower() == cat_camp.lower() for c in categorias):
+                    cat_bucket = cat_camp or "Sin Categoría"
+                    if categorias and not any(c.lower() == cat_bucket.lower() for c in categorias):
                         continue
                     filas_gasto.append({"fecha": dt, "gasto": float(fila["_gasto"]), "anio": dt.year})
 

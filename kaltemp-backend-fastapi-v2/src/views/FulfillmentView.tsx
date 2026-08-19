@@ -5,6 +5,7 @@ import { useGlobalFilter } from '../context/FilterContext';
 import { fetchFulfillment, fetchFulfillmentPorProducto } from '../services/api';
 import { CrossFilterBanner } from '../components/CrossFilterBanner';
 import { SortableTh } from '../components/SortableTh';
+import { KPICard } from '../components/KPICard';
 
 interface Props {
   theme: ThemeMode;
@@ -13,10 +14,32 @@ interface Props {
 const COLORES_CANAL = ['#30D158', '#FF9F0A', '#0A84FF', '#5E5CE6', '#FF375F', '#64D2FF'];
 
 const fmtM = (n: number) => `$${((n || 0) / 1000000).toFixed(1)} M`;
+const fmtPct = (n: number, dec = 1) => `${(n || 0).toFixed(dec)}%`;
 const fmtVar = (cy: number, prev: number) => {
   if (!prev) return null;
   return ((cy - prev) / prev) * 100;
 };
+
+// Mismo helper que ResumenView.tsx: arma un sparkline SVG real a partir de
+// una serie diaria (no hardcodeado), para que la tarjeta "Margen Frontal"
+// de este módulo se comporte igual que la del módulo Principal.
+function buildSparklineSvg(values: number[], color: string): string {
+  if (!values || values.filter((v) => v !== null && v !== undefined).length < 2) return '';
+  const w = 110, h = 32, pad = 3;
+  const clean = values.map((v) => (typeof v === 'number' && !isNaN(v) ? v : 0));
+  const min = Math.min(...clean);
+  const max = Math.max(...clean);
+  const range = max - min || 1;
+  const stepX = (w - pad * 2) / (clean.length - 1);
+  const points = clean.map((v, i) => ({
+    x: Number((pad + i * stepX).toFixed(1)),
+    y: Number((h - pad - ((v - min) / range) * (h - pad * 2 - 4)).toFixed(1)),
+  }));
+  const polyline = points.map((p) => `${p.x},${p.y}`).join(' ');
+  const polygon = `${points[0].x},${h} ${polyline} ${points[points.length - 1].x},${h}`;
+  const last = points[points.length - 1];
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polygon points="${polygon}" fill="${color}" opacity="0.15"/><polyline points="${polyline}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/><circle cx="${last.x}" cy="${last.y}" r="3" fill="${color}"/></svg>`;
+}
 
 export const FulfillmentView: React.FC<Props> = ({ theme }) => {
   const isDark = theme === 'dark';
@@ -93,6 +116,13 @@ export const FulfillmentView: React.FC<Props> = ({ theme }) => {
   const totalConsolidado = data?.totalConsolidadoCy || 0;
   const shareDirecta = totalConsolidado ? 100 - shareCy : 0;
 
+  const margenFrontalCy = data?.margenFrontalCy || 0;
+  const margenFrontalWow = data?.margenFrontalWow || 0;
+  const margenFrontalYoy = data?.margenFrontalYoy || 0;
+  const margenFrontal2Yoy = data?.margenFrontal2Yoy || 0;
+  const margenFrontalSerie: number[] = Array.isArray(data?.margenFrontalSerie) ? data.margenFrontalSerie : [];
+  const margenColor = isDark ? '#30D158' : '#15803D';
+
   const programas: { canal: string; origen: string; venta: number }[] = Array.isArray(data?.programas) ? data.programas : [];
 
   const panelBg = isDark ? "bg-[#1C1C1E] border-[#2C2C2E]" : "bg-white border-slate-200/80 shadow-sm";
@@ -121,16 +151,23 @@ export const FulfillmentView: React.FC<Props> = ({ theme }) => {
         </div>
       )}
 
-      {/* Encabezado */}
-      <div className="flex items-center justify-between">
-        <h1 className={"text-2xl font-black tracking-tight flex items-center gap-2.5 " + titleBlue}>
-          <Truck className="w-7 h-7 text-blue-600 dark:text-blue-400" /> Detalle Fulfillment
-        </h1>
-      </div>
-
       {/* Top Banner KPI Cards Estilo Apple HIG */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+
+        {/* KPI 0: Margen Frontal (%) -- mismo componente/diseño que el módulo Principal */}
+        <KPICard
+          title="MARGEN FRONTAL (%)"
+          mainValue={fmtPct(margenFrontalCy)}
+          colorValue={margenColor}
+          sparklineSvg={buildSparklineSvg(margenFrontalSerie, margenColor)}
+          theme={theme}
+          rows={[
+            { label: 'WOW', value: fmtPct(margenFrontalWow), current: margenFrontalCy, target: margenFrontalWow, isPP: true },
+            { label: 'YOY', value: fmtPct(margenFrontalYoy), current: margenFrontalCy, target: margenFrontalYoy, isPP: true },
+            { label: '2YOY', value: fmtPct(margenFrontal2Yoy), current: margenFrontalCy, target: margenFrontal2Yoy, isPP: true },
+          ]}
+        />
+
         {/* KPI 1: Venta Bruta Fulfillment */}
         <div className={"p-5 rounded-2xl border transition-all hover:shadow-md " + panelBg}>
           <span className={"text-[10px] font-black uppercase tracking-wider block " + titleBlue}>

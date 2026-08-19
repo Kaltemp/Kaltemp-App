@@ -641,10 +641,13 @@ def _escribir_ventas_en_duckdb(df_proc, f_inicio, f_fin):
                 ES_GLOSA_SERVICIO BOOLEAN
             )
         """)
-        try:
+        columnas_existentes = {
+            row[0] for row in con.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'ventas'"
+            ).fetchall()
+        }
+        if "ES_GLOSA_SERVICIO" not in columnas_existentes:
             con.execute("ALTER TABLE ventas ADD COLUMN ES_GLOSA_SERVICIO BOOLEAN DEFAULT FALSE")
-        except duckdb.Error:
-            pass
 
         con.execute("DELETE FROM ventas WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ?", [f_inicio, f_fin])
         con.register("df_proc_tmp", df_proc)

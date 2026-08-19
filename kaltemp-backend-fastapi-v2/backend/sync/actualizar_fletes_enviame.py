@@ -421,10 +421,13 @@ def ejecutar_actualizacion_costos(forzar_todo: bool = None):
     print(f"⚖️ {len(pesos_por_sku)} SKUs con peso real cargado (para el Plan A).")
     con = duckdb.connect(DB_FILE)
 
-    try:
+    columnas_existentes = {
+        row[0] for row in con.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'enviame_despachos'"
+        ).fetchall()
+    }
+    if "ES_COSTO_REAL" not in columnas_existentes:
         con.execute("ALTER TABLE enviame_despachos ADD COLUMN ES_COSTO_REAL BOOLEAN DEFAULT FALSE")
-    except duckdb.Error:
-        pass  # ya existe -- normal en corridas posteriores a la primera
 
     # FORZAR_RECALCULO=1 (agregado 11-ago-2026): por default el script solo
     # toca despachos con COSTO_ENVIO en NULL/0 -- así que un despacho ya

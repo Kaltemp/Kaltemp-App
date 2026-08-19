@@ -1,7 +1,7 @@
 """
 Módulo Detalle Fulfillment — replica EXACTA de la lógica de app.py (Streamlit):
-ventas de fulfillment = ORIGEN in ('BSALE_FULL', 'FALABELLA_API'), sobre la
-misma tabla `ventas` (no existe ni hace falta una tabla separada).
+ventas de fulfillment = todo lo que NO es ORIGEN='BSALE', sobre la misma
+tabla `ventas` (no existe ni hace falta una tabla separada).
 
 AGREGADO (02-ago-2026): endpoint /api/fulfillment-por-producto -- desglose
 real por producto y canal (antes esto era 100% mock en el frontend, con
@@ -13,15 +13,43 @@ FBF/FBM/FBP/FBR; se devuelve una fila por combinación producto+canal
 realmente presente en los datos).
 
 NOTA IMPORTANTE (confirmado con William, 02-ago-2026): el propio origen de
-los datos de `ventas.ORIGEN IN ('BSALE_FULL','FALABELLA_API')` es externo a
-este backend -- Falabella se trae directo de Falabella Seller Center, el
-resto de los marketplaces (Mercado Libre, Paris, etc.) se traen de Bsale
-vía consumos de stock en la bodega "Full MKP" (GET /v1/stocks/consumptions.json,
-con el precio de venta embebido en el campo `note`/observación de cada
-consumo -- confirmado real, endpoint documentado en
+los datos de fulfillment es externo a este backend -- Falabella se trae
+directo de Falabella Seller Center, el resto de los marketplaces (Mercado
+Libre, Paris, etc.) se traen de Bsale vía consumos de stock en la bodega
+"Full MKP" (GET /v1/stocks/consumptions.json, con el precio de venta
+embebido en el campo `note`/observación de cada consumo -- confirmado
+real, endpoint documentado en
 https://apichile.bsalelab.com/lista-de-endpoints/productos-y-servicios/stocks).
 Ese proceso de sync ya puebla `ventas` correctamente (es el mismo que usa
 el módulo Principal) -- este router NO lo reimplementa, solo lo consulta.
+
+AGREGADO (19-ago-2026, pedido de William): tarjeta "MARGEN FRONTAL (%)"
+igual a la del módulo Principal (mismo componente KPICard.tsx, con
+sparkline + comparativas WOW/YOY/2YOY). Antes /api/fulfillment solo traía
+margenFrontalCy (sin comparativas ni serie diaria) -- se agregan
+margenFrontalWow / margenFrontalYoy / margenFrontal2Yoy (mismo criterio de
+periodos que ya usa este endpoint para venta: WOW = semana anterior,
+YOY = mismo periodo año anterior, 2YOY = mismo periodo hace 2 años) y
+margenFrontalSerie (serie diaria de los últimos 14 días hasta fecha_fin,
+mismo patrón que `resumen.py`, pero acotada a fulfillment para que el
+sparkline refleje solo eso).
+
+CORREGIDO (19-ago-2026, bug real reportado por William con capturas de
+pantalla: "Detalle Fulfillment" solo mostraba Falabella, ni rastro de
+Mercado Libre/Ripley/Paris, aunque la Vista Principal sí los mostraba con
+venta FULL > 0 para esos canales): este router filtraba con una lista
+fija `_ORIGENES_FULL = ("BSALE_FULL", "FALABELLA_API")`. La carga
+histórica de fulfillment que se hizo por separado (ver comentario
+"FULL_HISTORICO_MANUAL" en sync_ventas_full.py) quedó con un tercer tag
+de ORIGEN que NO estaba en esa lista -- así que esas filas nunca
+calzaban con el filtro `IN (...)` de este router y caían silenciosamente
+del lado de "venta directa" (por el `NOT IN` de _venta_directa_periodo),
+aunque channels.py (Vista Principal) sí las mostraba como FULL porque ese
+router usa un criterio más simple y a prueba de nuevos tags: cualquier
+ORIGEN que no sea exactamente 'BSALE' cuenta como fulfillment. Se cambia
+este router para usar EL MISMO criterio (`ORIGEN != 'BSALE'` /
+`ORIGEN = 'BSALE'`), así los dos módulos quedan consistentes sin importar
+qué tag de ORIGEN use cada fuente de fulfillment (actual o futura).
 """
 from datetime import date, timedelta
 from fastapi import APIRouter, Query
@@ -29,23 +57,54 @@ from db import get_connection
 
 router = APIRouter(prefix="/api", tags=["fulfillment"])
 
-_ORIGENES_FULL = ("BSALE_FULL", "FALABELLA_API")
-
 
 def _totales_periodo(con, fecha_inicio: date, fecha_fin: date) -> dict:
-    placeholders = ", ".join(["?"] * len(_ORIGENES_FULL))
-    sql = f"""
+    sql = """
         SELECT
             SUM(BRUTO_TOTAL) AS venta,
             SUM(CASE WHEN ES_GLOSA_SERVICIO THEN 0 ELSE CONTRIBUCION END) AS contribucion,
             SUM(CASE WHEN ES_GLOSA_SERVICIO THEN 0 ELSE NETO_TOTAL END) AS neto
         FROM ventas
         WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ?
-          AND ORIGEN IN ({placeholders})
+          AND ORIGEN != 'BSALE'
     """
-    fila = con.execute(sql, [fecha_inicio, fecha_fin, *_ORIGENES_FULL]).fetchone()
+    fila = con.execute(sql, [fecha_inicio, fecha_fin]).fetchone()
     venta, contribucion, neto = (fila or (0, 0, 0))
     return {"venta": venta or 0, "contribucion": contribucion or 0, "neto": neto or 0}
+
+
+def _margen_pct(t: dict) -> float:
+    return (t["contribucion"] / t["neto"] * 100) if t["neto"] else 0.0
+
+
+def _serie_margen_diaria(con, fecha_fin: date, dias: int = 14) -> list:
+    """
+    Serie diaria de margen frontal (%) de los últimos `dias` días hasta
+    fecha_fin (inclusive), solo sobre ventas de fulfillment. Días sin
+    ventas quedan en 0.0 (mismo criterio que el sparkline de resumen.py).
+    """
+    fecha_ini_serie = fecha_fin - timedelta(days=dias - 1)
+    sql = """
+        SELECT
+            CAST(FECHA_OBJ AS DATE) AS dia,
+            SUM(CASE WHEN ES_GLOSA_SERVICIO THEN 0 ELSE CONTRIBUCION END) AS contribucion,
+            SUM(CASE WHEN ES_GLOSA_SERVICIO THEN 0 ELSE NETO_TOTAL END) AS neto
+        FROM ventas
+        WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ?
+          AND ORIGEN != 'BSALE'
+        GROUP BY CAST(FECHA_OBJ AS DATE)
+        ORDER BY dia
+    """
+    filas = con.execute(sql, [fecha_ini_serie, fecha_fin]).fetchall()
+    por_dia = {f[0]: (f[1] or 0, f[2] or 0) for f in filas}
+
+    serie = []
+    cursor = fecha_ini_serie
+    while cursor <= fecha_fin:
+        contribucion, neto = por_dia.get(cursor, (0, 0))
+        serie.append(round((contribucion / neto * 100) if neto else 0.0, 1))
+        cursor += timedelta(days=1)
+    return serie
 
 
 def _venta_directa_periodo(con, fecha_inicio: date, fecha_fin: date) -> float:
@@ -54,28 +113,26 @@ def _venta_directa_periodo(con, fecha_inicio: date, fecha_fin: date) -> float:
     para la comparativa real "Directa vs Fulfillment" (antes esos 2 números
     estaban escritos a mano en el frontend).
     """
-    placeholders = ", ".join(["?"] * len(_ORIGENES_FULL))
-    sql = f"""
+    sql = """
         SELECT SUM(BRUTO_TOTAL)
         FROM ventas
         WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ?
-          AND ORIGEN NOT IN ({placeholders})
+          AND ORIGEN = 'BSALE'
     """
-    fila = con.execute(sql, [fecha_inicio, fecha_fin, *_ORIGENES_FULL]).fetchone()
+    fila = con.execute(sql, [fecha_inicio, fecha_fin]).fetchone()
     return (fila[0] if fila else 0) or 0
 
 
 def _por_canal(con, fecha_inicio: date, fecha_fin: date):
-    placeholders = ", ".join(["?"] * len(_ORIGENES_FULL))
-    sql = f"""
+    sql = """
         SELECT CANAL, ORIGEN, SUM(BRUTO_TOTAL) AS venta
         FROM ventas
         WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ?
-          AND ORIGEN IN ({placeholders})
+          AND ORIGEN != 'BSALE'
         GROUP BY CANAL, ORIGEN
         ORDER BY venta DESC
     """
-    filas = con.execute(sql, [fecha_inicio, fecha_fin, *_ORIGENES_FULL]).fetchall()
+    filas = con.execute(sql, [fecha_inicio, fecha_fin]).fetchall()
     return [{"canal": r[0], "origen": r[1], "venta": round(r[2] or 0, 0)} for r in filas]
 
 
@@ -86,16 +143,23 @@ def get_fulfillment(
 ):
     wow_ini, wow_fin = fecha_inicio - timedelta(days=7), fecha_fin - timedelta(days=7)
     yoy_ini, yoy_fin = fecha_inicio.replace(year=fecha_inicio.year - 1), fecha_fin.replace(year=fecha_fin.year - 1)
+    twoyoy_ini, twoyoy_fin = fecha_inicio.replace(year=fecha_inicio.year - 2), fecha_fin.replace(year=fecha_fin.year - 2)
 
     with get_connection() as con:
         cy = _totales_periodo(con, fecha_inicio, fecha_fin)
         wow = _totales_periodo(con, wow_ini, wow_fin)
         yoy = _totales_periodo(con, yoy_ini, yoy_fin)
+        twoyoy = _totales_periodo(con, twoyoy_ini, twoyoy_fin)
         programas = _por_canal(con, fecha_inicio, fecha_fin)
         venta_directa_cy = _venta_directa_periodo(con, fecha_inicio, fecha_fin)
         venta_directa_yoy = _venta_directa_periodo(con, yoy_ini, yoy_fin)
+        margen_frontal_serie = _serie_margen_diaria(con, fecha_fin)
 
-    margen_frontal = (cy["contribucion"] / cy["neto"] * 100) if cy["neto"] else 0.0
+    margen_frontal = _margen_pct(cy)
+    margen_frontal_wow = _margen_pct(wow)
+    margen_frontal_yoy = _margen_pct(yoy)
+    margen_frontal_2yoy = _margen_pct(twoyoy)
+
     total_consolidado = cy["venta"] + venta_directa_cy
     share_fulfillment = (cy["venta"] / total_consolidado * 100) if total_consolidado else 0.0
     total_consolidado_yoy = yoy["venta"] + venta_directa_yoy
@@ -109,6 +173,10 @@ def get_fulfillment(
         "contribucionWow": round(wow["contribucion"], 0),
         "contribucionYoy": round(yoy["contribucion"], 0),
         "margenFrontalCy": round(margen_frontal, 1),
+        "margenFrontalWow": round(margen_frontal_wow, 1),
+        "margenFrontalYoy": round(margen_frontal_yoy, 1),
+        "margenFrontal2Yoy": round(margen_frontal_2yoy, 1),
+        "margenFrontalSerie": margen_frontal_serie,
         "programas": programas,
         "ventaDirectaCy": round(venta_directa_cy, 0),
         "ventaDirectaYoy": round(venta_directa_yoy, 0),
@@ -128,17 +196,16 @@ def _por_producto_canal(con, fecha_inicio: date, fecha_fin: date) -> dict:
     tabla "por producto", así que una línea de despacho no debe poder
     aparecer como si fuera un producto vendido.
     """
-    placeholders = ", ".join(["?"] * len(_ORIGENES_FULL))
-    sql = f"""
+    sql = """
         SELECT PRODUCTO, CANAL, SUM(CANTIDAD) AS unidades, SUM(BRUTO_TOTAL) AS venta
         FROM ventas
         WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ?
-          AND ORIGEN IN ({placeholders})
+          AND ORIGEN != 'BSALE'
           AND PRODUCTO IS NOT NULL AND TRIM(PRODUCTO) != ''
           AND NOT ES_GLOSA_SERVICIO
         GROUP BY PRODUCTO, CANAL
     """
-    filas = con.execute(sql, [fecha_inicio, fecha_fin, *_ORIGENES_FULL]).fetchall()
+    filas = con.execute(sql, [fecha_inicio, fecha_fin]).fetchall()
     return {(f[0], f[1]): {"unidades": f[2] or 0, "venta": f[3] or 0} for f in filas}
 
 

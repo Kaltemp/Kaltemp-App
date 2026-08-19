@@ -7,14 +7,30 @@
 // - "Fecha Entrega" queda pendiente hasta confirmar con Envíame si el
 //   dato existe (ver diagnostico_fecha_entrega_enviame.py) -- no se
 //   agrega una columna con datos inventados mientras tanto.
+//
+// Cambios 19-ago-2026 (reportado por William: "el módulo de control
+// logístico no está trayendo datos"):
+// - El componente nunca revisaba `kpis.disponible` / `kpis.mensaje`, que
+//   GET /api/logistica devuelve explícitamente cuando la tabla
+//   'enviame_despachos' todavía no existe (mismo patrón defensivo que
+//   usan get_stock / get_pendientes_despacho en el backend). Sin este
+//   chequeo, ese caso caía en `kpis?.despachosCy ?? shipments.length ?? 0`
+//   y compañía, mostrando 4 tarjetas en $0/0 en silencio -- indistinguible
+//   de "no hay actividad real" para quien mira la pantalla.
+// - El .catch(...) de la carga solo hacía console.error -- cualquier error
+//   real de backend (500, fecha inválida, etc.) también terminaba
+//   mostrando la misma pantalla vacía sin ninguna pista visible. Se agrega
+//   un banner de error igual al que ya usan otros módulos (Fulfillment,
+//   Notas de Crédito) para que un fallo real se note en la UI en vez de
+//   quedar solo en la consola del navegador.
 import React, { useState, useEffect, useMemo } from 'react';
-import { ThemeMode} from '../types';
-import { 
-  Send, 
-  DollarSign, 
-  Truck, 
-  TrendingUp, 
-  RefreshCw, 
+import { ThemeMode } from '../types';
+import {
+  Send,
+  DollarSign,
+  Truck,
+  TrendingUp,
+  RefreshCw,
   Search,
   CheckCircle2,
   Clock,
@@ -35,6 +51,7 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
   const [kpis, setKpis] = useState<any>(null);
   const [shipments, setShipments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
 
@@ -47,8 +64,12 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
       .then(([resKpis, resShipments]) => {
         setKpis(resKpis);
         setShipments(Array.isArray(resShipments) ? resShipments : resShipments?.items || []);
+        setError(null);
       })
-      .catch((err) => console.error("Error al cargar datos logísticos:", err))
+      .catch((err) => {
+        console.error("Error al cargar datos logísticos:", err);
+        setError(err?.message || 'No se pudo cargar Control Logístico. Revisa la consola/servidor.');
+      })
       .finally(() => setLoading(false));
   }, [startDate, endDate]);
 
@@ -67,6 +88,12 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
   const cobroBsale = kpis?.cobroBsaleCy ?? 0;
   const diferenciaFlete = kpis?.diferencia ?? (cobroBsale - costoEnviame);
 
+  // AGREGADO (19-ago-2026): si el backend responde disponible:false (la
+  // tabla enviame_despachos todavía no existe en esta base), se muestra
+  // un aviso explícito en vez de tarjetas en $0 indistinguibles de "no
+  // hay envíos en el rango".
+  const noDisponible = kpis && kpis.disponible === false;
+
   // Filtrado reactivo en tiempo real
   const filteredShipments = useMemo(() => {
     return shipments.filter((s: any) => {
@@ -76,13 +103,13 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
       const producto = (s.producto || '').toLowerCase();
       const estado = (s.estado || 'ENTREGADO').toUpperCase();
 
-      const matchesSearch = 
+      const matchesSearch =
         ref.includes(searchTerm.toLowerCase()) ||
         cliente.includes(searchTerm.toLowerCase()) ||
         comuna.includes(searchTerm.toLowerCase()) ||
         producto.includes(searchTerm.toLowerCase());
 
-      const matchesStatus = 
+      const matchesStatus =
         statusFilter === 'ALL' ||
         (statusFilter === 'ENTREGADO' && estado === 'ENTREGADO') ||
         (statusFilter === 'PENDIENTE' && estado !== 'ENTREGADO');
@@ -107,13 +134,25 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
   return (
     <div className="space-y-6 animate-in fade-in duration-300 pb-10">
 
+      {error && (
+        <div className={isDark ? "px-4 py-3 rounded-2xl text-xs font-bold bg-rose-500/10 text-rose-300 border border-rose-500/20" : "px-4 py-3 rounded-2xl text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200"}>
+          {error}
+        </div>
+      )}
+
+      {!error && noDisponible && (
+        <div className={isDark ? "px-4 py-3 rounded-2xl text-xs font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20" : "px-4 py-3 rounded-2xl text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200"}>
+          {kpis?.mensaje || "Control Logístico aún no tiene datos disponibles."}
+        </div>
+      )}
+
       {/* KPI CARDS APPLE HIG STYLE */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        
+
         {/* TOTAL DESPACHOS */}
         <div className={`p-5 rounded-2xl border transition-all duration-200 ${
-          isDark 
-            ? 'bg-[#1C1C1E] border-[#2C2C2E] hover:border-[#3A3A3C]' 
+          isDark
+            ? 'bg-[#1C1C1E] border-[#2C2C2E] hover:border-[#3A3A3C]'
             : 'bg-white border-slate-200/80 shadow-sm hover:shadow-md'
         }`}>
           <div className="flex items-center justify-between">
@@ -134,8 +173,8 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
 
         {/* COSTO ENVÍAME */}
         <div className={`p-5 rounded-2xl border transition-all duration-200 ${
-          isDark 
-            ? 'bg-[#1C1C1E] border-[#2C2C2E] hover:border-[#3A3A3C]' 
+          isDark
+            ? 'bg-[#1C1C1E] border-[#2C2C2E] hover:border-[#3A3A3C]'
             : 'bg-white border-slate-200/80 shadow-sm hover:shadow-md'
         }`}>
           <div className="flex items-center justify-between">
@@ -156,8 +195,8 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
 
         {/* COBRO REAL BSALE */}
         <div className={`p-5 rounded-2xl border transition-all duration-200 ${
-          isDark 
-            ? 'bg-[#1C1C1E] border-[#2C2C2E] hover:border-[#3A3A3C]' 
+          isDark
+            ? 'bg-[#1C1C1E] border-[#2C2C2E] hover:border-[#3A3A3C]'
             : 'bg-white border-slate-200/80 shadow-sm hover:shadow-md'
         }`}>
           <div className="flex items-center justify-between">
@@ -178,8 +217,8 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
 
         {/* DIFERENCIA MARGEN */}
         <div className={`p-5 rounded-2xl border transition-all duration-200 ${
-          isDark 
-            ? 'bg-[#1C1C1E] border-[#2C2C2E] hover:border-[#3A3A3C]' 
+          isDark
+            ? 'bg-[#1C1C1E] border-[#2C2C2E] hover:border-[#3A3A3C]'
             : 'bg-white border-slate-200/80 shadow-sm hover:shadow-md'
         }`}>
           <div className="flex items-center justify-between">
@@ -206,7 +245,7 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
       <div className={`rounded-2xl border overflow-hidden transition-all duration-200 ${
         isDark ? 'bg-[#1C1C1E] border-[#2C2C2E]' : 'bg-white border-slate-200/80 shadow-sm'
       }`}>
-        
+
         {/* BARRA SUPERIOR DE BÚSQUEDA Y FILTROS */}
         <div className={`p-4 border-b flex flex-col sm:flex-row items-center justify-between gap-3 ${
           isDark ? 'border-[#2C2C2E] bg-[#171719]' : 'border-slate-100 bg-slate-50/50'
@@ -227,8 +266,8 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className={`w-full pl-9 pr-3 py-1.5 text-xs rounded-xl border outline-none transition-all ${
-                  isDark 
-                    ? 'bg-[#252528] border-[#333336] text-white placeholder-slate-500 focus:border-blue-500' 
+                  isDark
+                    ? 'bg-[#252528] border-[#333336] text-white placeholder-slate-500 focus:border-blue-500'
                     : 'bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-blue-500'
                 }`}
               />
@@ -240,8 +279,8 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
                 className={`px-3 py-1.5 text-xs rounded-xl border outline-none cursor-pointer transition-all ${
-                  isDark 
-                    ? 'bg-[#252528] border-[#333336] text-white focus:border-blue-500' 
+                  isDark
+                    ? 'bg-[#252528] border-[#333336] text-white focus:border-blue-500'
                     : 'bg-white border-slate-200 text-slate-800 focus:border-blue-500'
                 }`}
               >
@@ -288,8 +327,8 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
                   const isEntregado = (s.estado || 'ENTREGADO').toUpperCase() === 'ENTREGADO';
 
                   return (
-                    <tr 
-                      key={`${s.id || idx}`} 
+                    <tr
+                      key={`${s.id || idx}`}
                       className={`transition-colors hover:bg-blue-500/5 ${
                         isDark ? 'text-slate-200' : 'text-slate-800'
                       }`}
@@ -338,7 +377,7 @@ export const LogisticsView: React.FC<Props> = ({ theme }) => {
                       <td className="py-3 px-4 text-center">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${
                           isEntregado
-                            ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' 
+                            ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
                             : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
                         }`}>
                           {isEntregado ? <CheckCircle2 className="w-3 h-3" /> : <Clock className="w-3 h-3 animate-pulse" />}

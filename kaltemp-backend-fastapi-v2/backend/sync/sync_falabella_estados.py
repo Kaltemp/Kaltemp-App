@@ -18,6 +18,20 @@ Uso:
     export DUCKDB_PATH=/ruta/a/kaltemp_matrix.duckdb
     export FALABELLA_FECHA_DESDE=2026-01-01   # opcional, mismo default que Pendientes
     python sync_falabella_estados.py
+
+CORREGIDO (19-ago-2026, mismo bug real que sync_ga4_kaltemp.py /
+sync_notas_credito.py -- ver hallazgo en sync_admin.py): el guardado en
+DuckDB hacía DROP TABLE + CREATE TABLE completo, usando SOLO los pedidos
+de la ventana [fecha_desde, hoy] recién consultada a Falabella. El botón
+"Actualizar Ahora (últimos 30 días)" del panel web le pasa dias_atras=30
+a esta función igual que a cualquier otra que lo acepte -- así que
+borraba TODA la tabla y la dejaba solo con pedidos de los últimos 30
+días. Esta tabla no tiene una columna de fecha del pedido (solo
+ACTUALIZADO_EN, la hora de la corrida), así que en vez de borrar por
+rango de fecha se borra puntualmente por los N° de pedido que se
+volvieron a consultar esta corrida (ya se conocen, vienen de GetOrders)
+y se reinsertan -- los pedidos que no estaban en la ventana consultada
+quedan intactos, sin importar qué tan chico sea dias_atras.
 """
 import os
 import sys
@@ -50,12 +64,15 @@ def sync_falabella_estados(dias_atras: int = None, progress_callback=None):
     print(f"[{datetime.now()}] {len(pedidos)} pedidos encontrados. Consultando GetOrderItems de cada uno...")
 
     filas = []
+    pedido_numeros_consultados = set()
     procesados = 0
     for pedido in pedidos:
         order_id = pedido.get("OrderId")
         order_number = pedido.get("OrderNumber", order_id)
         if not order_id:
             continue
+
+        pedido_numeros_consultados.add(str(order_number))
 
         items = get_order_items(order_id)
         for it in items:
@@ -77,14 +94,26 @@ def sync_falabella_estados(dias_atras: int = None, progress_callback=None):
 
     con = duckdb.connect(DB_PATH, read_only=False)
     try:
-        con.execute("DROP TABLE IF EXISTS falabella_estados_pedido")
         con.execute("""
-            CREATE TABLE falabella_estados_pedido (
+            CREATE TABLE IF NOT EXISTS falabella_estados_pedido (
                 PEDIDO_NUMERO VARCHAR, SKU VARCHAR,
                 ESTADO_RAW VARCHAR, ESTADO_LEGIBLE VARCHAR,
                 ACTUALIZADO_EN TIMESTAMP
             )
         """)
+        # CORREGIDO (19-ago-2026): antes era DROP+CREATE completo -- ver
+        # nota arriba. Esta tabla no tiene columna de fecha de pedido, así
+        # que se borra por los N° de pedido que efectivamente se
+        # volvieron a consultar esta corrida (conocidos, vienen de
+        # GetOrders), no la tabla entera -- los pedidos fuera de la
+        # ventana consultada quedan intactos.
+        pedido_numeros_lista = list(pedido_numeros_consultados)
+        if pedido_numeros_lista:
+            placeholders = ",".join(["?"] * len(pedido_numeros_lista))
+            con.execute(
+                f"DELETE FROM falabella_estados_pedido WHERE PEDIDO_NUMERO IN ({placeholders})",
+                pedido_numeros_lista,
+            )
         con.executemany(
             """INSERT INTO falabella_estados_pedido
                (PEDIDO_NUMERO, SKU, ESTADO_RAW, ESTADO_LEGIBLE, ACTUALIZADO_EN)
@@ -99,7 +128,7 @@ def sync_falabella_estados(dias_atras: int = None, progress_callback=None):
             ["falabella_estados_pedido", datetime.now(timezone.utc).replace(tzinfo=None)],
         )
         con.commit()
-        print(f"[{datetime.now()}] ✅ falabella_estados_pedido actualizada ({len(filas)} filas)")
+        print(f"[{datetime.now()}] ✅ falabella_estados_pedido actualizada ({len(filas)} filas, {len(pedido_numeros_lista)} pedidos refrescados)")
     finally:
         con.close()
 

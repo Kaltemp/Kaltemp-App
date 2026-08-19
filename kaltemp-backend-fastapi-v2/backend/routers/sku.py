@@ -224,14 +224,20 @@ def get_categoria_resumen(
     canales: str = Query(None),
 ):
     """
-    Venta total agrupada por CATEGORIA para el rango de fechas -- reemplaza
-    el `categoryChartData` fijo del gráfico de barras horizontal.
+    Venta total agrupada por CATEGORIA para el rango de fechas, con
+    comparativo YoY (mismo patron que /canal-resumen) -- alimenta el
+    grafico de barras agrupadas por año (año anterior vs año actual)
+    con etiquetas de monto + var% YoY en la barra del año actual.
     Se filtra por Vendedor/Canal (no por Categoría: sería redundante, ya
     que este mismo endpoint es el que arma el desglose por categoría).
     """
     extra_sql, extra_params = _filtro_extra(_parse_csv(vendedores), None, _parse_csv(canales))
+
+    yoy_inicio = fecha_inicio.replace(year=fecha_inicio.year - 1)
+    yoy_fin = fecha_fin.replace(year=fecha_fin.year - 1)
+
     with get_connection() as con:
-        filas = con.execute(f"""
+        cy = dict(con.execute(f"""
             SELECT CATEGORIA, SUM(BRUTO_TOTAL) AS venta
             FROM ventas
             WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ?
@@ -239,10 +245,37 @@ def get_categoria_resumen(
               AND NOT ES_GLOSA_SERVICIO
               {extra_sql}
             GROUP BY CATEGORIA
-            ORDER BY venta DESC
-        """, [fecha_inicio, fecha_fin, *extra_params]).fetchall()
+        """, [fecha_inicio, fecha_fin, *extra_params]).fetchall())
 
-    return [{"name": f[0], "value": round((f[1] or 0) / 1_000_000, 1)} for f in filas]
+        yoy = dict(con.execute(f"""
+            SELECT CATEGORIA, SUM(BRUTO_TOTAL) AS venta
+            FROM ventas
+            WHERE CAST(FECHA_OBJ AS DATE) BETWEEN ? AND ?
+              AND CATEGORIA IS NOT NULL AND TRIM(CATEGORIA) != ''
+              AND NOT ES_GLOSA_SERVICIO
+              {extra_sql}
+            GROUP BY CATEGORIA
+        """, [yoy_inicio, yoy_fin, *extra_params]).fetchall())
+
+    categorias_todas = set(cy.keys()) | set(yoy.keys())
+    resultado = []
+    for cat in categorias_todas:
+        venta_cy = cy.get(cat, 0) or 0
+        venta_yoy = yoy.get(cat, 0) or 0
+        pct = round(((venta_cy - venta_yoy) / venta_yoy * 100), 1) if venta_yoy else None
+        resultado.append({
+            "name": cat,
+            "value": round(venta_cy / 1_000_000, 1),
+            "valueAnterior": round(venta_yoy / 1_000_000, 1),
+            "yoyPct": pct,
+        })
+    resultado.sort(key=lambda r: r["value"], reverse=True)
+
+    return {
+        "anioActual": fecha_fin.year,
+        "anioAnterior": fecha_fin.year - 1,
+        "categorias": resultado,
+    }
 
 
 @router.get("/canal-resumen")

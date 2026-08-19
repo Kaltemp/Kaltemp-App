@@ -5,12 +5,12 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { ThemeMode } from '../types';
-import { 
-  useGlobalFilter, 
-  ALL_REPS, 
-  ALL_CATEGORIES, 
-  ALL_CHANNELS, 
-  ALL_WAREHOUSES 
+import {
+  useGlobalFilter,
+  ALL_REPS,
+  ALL_CATEGORIES,
+  ALL_CHANNELS,
+  ALL_WAREHOUSES
 } from '../context/FilterContext';
 import { fetchCumplimiento, fetchRecomendacionesPrecioStock, fetchHistoricoAnual, fetchProductosActual, fetchSkuDetalleCumplimiento } from '../services/api';
 import { SortableTh } from '../components/SortableTh';
@@ -102,11 +102,11 @@ function obtenerCicloComercialActual(): { startDate: string; endDate: string; la
 export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
   const isDark = theme === 'dark';
 
-  const { 
-    selectedCategories, 
-    selectedChannels, 
-    selectedReps, 
-    selectedWarehouses 
+  const {
+    selectedCategories,
+    selectedChannels,
+    selectedReps,
+    selectedWarehouses
   } = useGlobalFilter();
 
   const cicloComercial = useMemo(() => obtenerCicloComercialActual(), []);
@@ -171,10 +171,10 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
       })
       .finally(() => setLoading(false));
   }, [
-    cicloComercial, 
-    selectedReps, 
-    selectedCategories, 
-    selectedChannels, 
+    cicloComercial,
+    selectedReps,
+    selectedCategories,
+    selectedChannels,
     selectedWarehouses
   ]);
 
@@ -319,18 +319,39 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
   const contriProyeccion = Number((contriReal * runRateFactor).toFixed(1));
   const pctProyeccionVenta = Math.round((ventaProyeccion / (numVentaMeta || 1)) * 100);
 
+  // Días que quedan del ciclo comercial para seguir vendiendo (mínimo 1,
+  // para no dividir por cero el último día) -- se usa para repartir la
+  // brecha de contribución pendiente (si la hay) en un monto diario.
+  const diasRestantes = Math.max(totalDaysCycle - daysElapsed, 1);
+
+  // Cada canal reparte la META GLOBAL de contribución (numContriMeta, la
+  // que el usuario edita arriba) según su propio share de la contribución
+  // YA lograda -- mismo criterio que "meta" siempre tuvo acá. A partir de
+  // esa meta por canal, "CONTRIBUCIÓN DIARIA" ahora es cuánto falta vender
+  // POR DÍA para llegar al 100% de esa meta -- no el ritmo ya logrado.
+  // Si el canal ya alcanzó o superó su meta (faltante <= 0), se marca
+  // metaCumplida=true y NO se calcula ni muestra un monto "pendiente"
+  // (bug reportado 19-ago-2026: seguía mostrando contribución pendiente
+  // aun con más de 100% de la meta del canal).
   const channelBreakdown = useMemo(() => {
     const canales = cumplimientoData?.canalBreakdown ?? [];
-    return canales.map((c: any) => ({
-      canal: c.canal,
-      contri: c.contri,
-      proy: c.proy,
-      meta: contriReal ? Number(((c.contri / contriReal) * numContriMeta).toFixed(1)) : 0,
-      contriDiaria: c.contriDiaria,
-      yoyPct: c.yoyPct,
-      margenPct: c.margenPct,
-    }));
-  }, [cumplimientoData, contriReal, numContriMeta]);
+    return canales.map((c: any) => {
+      const meta = contriReal ? Number(((c.contri / contriReal) * numContriMeta).toFixed(1)) : 0;
+      const faltante = Number((meta - c.contri).toFixed(2));
+      const metaCumplida = faltante <= 0;
+      const contriDiariaNecesaria = metaCumplida ? 0 : Number((faltante / diasRestantes).toFixed(2));
+      return {
+        canal: c.canal,
+        contri: c.contri,
+        proy: c.proy,
+        meta,
+        contriDiariaNecesaria,
+        metaCumplida,
+        yoyPct: c.yoyPct,
+        margenPct: c.margenPct,
+      };
+    });
+  }, [cumplimientoData, contriReal, numContriMeta, diasRestantes]);
 
   const targetMilestones = [70, 80, 90, 100, 110, 120, 130, 140];
   const thresholdCards = targetMilestones.map((pct) => {
@@ -418,7 +439,7 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
       {/* --- PANEL DE AJUSTE DINÁMICO DE METAS Y CICLO AUTOMÁTICO --- */}
       <div className={`p-5 rounded-2xl border ${panelBg}`}>
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          
+
           <div className="flex items-center gap-3">
             <span className="p-2 rounded-xl bg-blue-500/10 text-blue-500 border border-blue-500/20">
               <Sliders className="w-5 h-5" />
@@ -490,7 +511,7 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
 
       {/* --- CUMPLIMIENTO KPI CARDS --- */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        
+
         {/* KPI 1: Venta Real */}
         <div className={`p-5 rounded-2xl border transition-all hover:shadow-md ${panelBg}`}>
           <div className="flex items-center justify-between">
@@ -504,8 +525,8 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
           <div className="mt-3 flex items-baseline gap-2">
             <span className={`text-3xl font-black tracking-tight ${titleBlue}`}>${ventaReal.toFixed(1)} M</span>
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-              pctVenta >= 100 
-                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' 
+              pctVenta >= 100
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
                 : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20'
             }`}>
               {numVentaMeta > 0 ? `${pctVenta}% Meta` : 'Sin Meta'}
@@ -550,8 +571,8 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
           <div className="mt-3 flex items-baseline gap-2">
             <span className={`text-3xl font-black tracking-tight ${titleEmerald}`}>${contriReal.toFixed(1)} M</span>
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-              pctContri >= 100 
-                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' 
+              pctContri >= 100
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
                 : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20'
             }`}>
               {numContriMeta > 0 ? `${pctContri}% Meta` : 'Sin Meta'}
@@ -620,7 +641,7 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
                 <th className="py-3 px-4 text-right">CONTRIBUCIÓN</th>
                 <th className="py-3 px-4 text-right">PROYECCIÓN</th>
                 <th className="py-3 px-4 text-right">META</th>
-                <th className="py-3 px-4 text-right">CONTRIBUCIÓN DIARIA</th>
+                <th className="py-3 px-4 text-right">CONTRIBUCIÓN DIARIA NECESARIA</th>
                 <th className="py-3 px-4 text-right">YoY %</th>
                 <th className="py-3 px-4 text-right">MARGEN</th>
               </tr>
@@ -634,7 +655,15 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
                   <td className={`py-3 px-4 text-right font-black ${titleEmerald}`}>${row.contri.toFixed(1)} M</td>
                   <td className="py-3 px-4 text-right font-bold">${row.proy.toFixed(1)} M</td>
                   <td className={`py-3 px-4 text-right font-semibold ${subtextColor}`}>${row.meta.toFixed(1)} M</td>
-                  <td className="py-3 px-4 text-right font-semibold">${row.contriDiaria.toFixed(1)} M</td>
+                  <td className="py-3 px-4 text-right font-semibold">
+                    {row.metaCumplida ? (
+                      <span className={`inline-flex items-center gap-1 font-bold ${titleEmerald}`}>
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Meta cumplida
+                      </span>
+                    ) : (
+                      `$${row.contriDiariaNecesaria.toFixed(2)} M`
+                    )}
+                  </td>
                   <td className={`py-3 px-4 text-right font-bold ${
                     row.yoyPct >= 0 ? titleEmerald : (isDark ? 'text-rose-400' : 'text-rose-700')
                   }`}>
@@ -652,7 +681,19 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
                 <td className={`py-3 px-4 text-right ${titleEmerald}`}>${contriReal.toFixed(1)} M</td>
                 <td className="py-3 px-4 text-right">${contriProyeccion.toFixed(1)} M</td>
                 <td className={`py-3 px-4 text-right ${subtextColor}`}>${numContriMeta.toFixed(1)} M</td>
-                <td className="py-3 px-4 text-right">${(ventaReal / (daysElapsed || 1)).toFixed(1)} M</td>
+                <td className="py-3 px-4 text-right">
+                  {(() => {
+                    const faltanteTotal = Number((numContriMeta - contriReal).toFixed(2));
+                    if (faltanteTotal <= 0) {
+                      return (
+                        <span className={`inline-flex items-center gap-1 ${titleEmerald}`}>
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Meta cumplida
+                        </span>
+                      );
+                    }
+                    return `$${(faltanteTotal / diasRestantes).toFixed(2)} M`;
+                  })()}
+                </td>
                 <td className={`py-3 px-4 text-right ${(() => {
                   const yoyTotal = cumplimientoData?.ventaYoyTotal;
                   return yoyTotal ? (ventaReal >= yoyTotal ? titleEmerald : (isDark ? 'text-rose-400' : 'text-rose-700')) : subtextColor;
@@ -705,8 +746,8 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
                   )}
                 </div>
                 <p className={`text-base font-black ${
-                  isSuperado 
-                    ? (isDark ? 'text-emerald-400' : 'text-emerald-700') 
+                  isSuperado
+                    ? (isDark ? 'text-emerald-400' : 'text-emerald-700')
                     : (isDark ? 'text-amber-400' : 'text-amber-800')
                 }`}>
                   {isSuperado ? `+$${card.diff} M` : `-$${Math.abs(card.diffNum).toFixed(1)} M`}
@@ -722,7 +763,7 @@ export const SalesTargetCumplimientoView: React.FC<Props> = ({ theme }) => {
 
       {/* --- GRÁFICOS DUALES --- */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
+
         {/* Gráfico 1: Histórico */}
         <div className={`p-6 rounded-2xl border shadow-sm ${panelBg}`}>
           <div className="flex items-center justify-between mb-4">
